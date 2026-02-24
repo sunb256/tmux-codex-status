@@ -1,0 +1,164 @@
+# tmux-codex-status
+
+Show Codex CLI state in tmux window list (`window-status-format`) as:
+
+- running: ` 🤖 R `
+- waiting: ` 🤖 W `
+- input required: ` 🤖 I `
+- error: ` 🤖 E `
+
+If a window has no Codex process, nothing is shown.
+The badge is placed at the beginning of each window item.
+
+## Files
+
+- `scripts/codex-notify.sh`: receives Codex `notify` payloads and updates per-pane state.
+- `scripts/codex-window-badge.sh`: renders one badge per window for tmux.
+- `scripts/codex-pane-menu.sh`: opens a pane menu (`display-menu`) with Codex badges.
+- `scripts/codex-select-pane.sh`: jumps to a selected pane from the menu.
+- `scripts/codex-refresh-pane-badges.sh`: updates cached plain badges for all panes.
+- `scripts/codex-state-gc.sh`: removes stale pane state from tmux env.
+- `tmux/codex-status.tmux`: tmux integration snippet.
+
+## Setup
+
+1. Point Codex notify to this repo script in `~/.codex/config.toml`:
+
+```toml
+notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
+```
+
+2. Load tmux settings from `~/.tmux.conf`:
+
+```tmux
+set -g @codex-status-dir '<plugin-path>/tmux-codex-status'
+source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux'
+```
+
+3. Reload tmux:
+
+```bash
+tmux source-file ~/.tmux.conf
+```
+
+## Optional: keep existing notify side effects
+
+If you already use a custom notify script (sound/desktop notification), call both scripts from a wrapper:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+<plugin-path>/tmux-codex-status/scripts/codex-notify.sh "$@"
+~/.codex/hooks/notify.sh "$@" || true
+```
+
+Then set `notify` to that wrapper.
+
+## tmux options
+
+User-facing options:
+
+- `@codex-status-icon` (default `🤖`)
+- `@codex-status-process-name` (default `codex`)
+- `@codex-status-separator` (default single space)
+- `@codex-status-color-r` (default `colour208`)
+- `@codex-status-color-w` (default `colour255`)
+- `@codex-status-color-i` (default `colour226`)
+- `@codex-status-color-e` (default `colour196`)
+- `@codex-status-bg-r` (default `colour88`)
+- `@codex-status-bg-w` (default `colour15`)
+- `@codex-status-bg-i` (default `colour15`)
+- `@codex-status-bg-e` (default `colour196`)
+- `@codex-status-fg-r` (default `colour255`)
+- `@codex-status-fg-w` (default `colour16`)
+- `@codex-status-fg-i` (default `colour16`)
+- `@codex-status-fg-e` (default `colour255`)
+- `@codex-status-sessions-dir` (default `$HOME/.codex/sessions`)
+- `@codex-status-session-lookback-minutes` (default `240`)
+- `@codex-status-session-scan-limit` (default `40`)
+- `@codex-status-session-cache-seconds` (default `2`)
+- `@codex-status-menu-title` (default `Codex Panes`)
+
+Internal cache/options (normally no need to edit):
+
+- `@codex-status-window-badge` (window-local cached plain badge text)
+- `@codex-status-pane-badge` (pane-local cached plain badge text for menu rows)
+
+Rendering note:
+
+- Badge is rendered as a background-colored block for better visibility in `window-status-format`.
+- In the status bar, the badge is rendered before `#I: #W`.
+- The same state colors are used in `prefix+w` menu badges (`🤖 R/W/I/E`), while non-badge text remains unchanged.
+- Legacy `@codex-status-color-*` values are still read as fallback background colors.
+- If foreground and background resolve to the same color, foreground is auto-adjusted for contrast.
+
+Color tuning example:
+
+```tmux
+# Run: wine background + white text
+set -g @codex-status-bg-r "colour88"
+set -g @codex-status-fg-r "colour255"
+
+# Wait: light gray background + black text
+set -g @codex-status-bg-w "colour252"
+set -g @codex-status-fg-w "colour16"
+
+# Input: white background + black text
+set -g @codex-status-bg-i "colour15"
+set -g @codex-status-fg-i "colour16"
+```
+
+`prefix+w` note:
+
+- The plugin rebinds `prefix+w` to `run-shell "scripts/codex-pane-menu.sh"`.
+- A `display-menu` pane list is shown instead of tmux's default tree.
+- Each row starts with a badge column, then `S<session>:W<window>:P<pane> [#{pane_current_command}]#{b:pane_current_path}`.
+- Codex panes show a colored `🤖 R/W/I/E` badge in that leading column, with a trailing space in the badge text.
+- Every row keeps one plain space before `S<session>...`.
+- Non-Codex panes show no badge and use blank padding in the leading badge column so text stays aligned with Codex rows.
+- In this menu, only the badge (`🤖 R/W/I/E`) is colorized using the same `@codex-status-bg-*` and `@codex-status-fg-*` options.
+- If your terminal font renders emoji width differently, adjust `@codex-status-icon` (or use an ASCII icon) for perfect alignment.
+- Selecting a row runs `scripts/codex-select-pane.sh` and jumps to that pane.
+- `R` in this menu is inferred from recent Codex session logs in the same way as the status bar.
+
+## State mapping
+
+Codex event -> state:
+
+- `start|session-start|turn-start|agent-turn-start|working|running` -> `R`
+- `permission*|approv*|needs-input|input-required|ask-user|approval-requested` -> `I`
+- `error|errored|failed|fail*` -> `E`
+- `agent-turn-complete|turn-completed|complete|completed|done|stop|waiting|idle|other` -> `W`
+
+`notify` payload handling:
+
+- The script accepts both plain event strings and Codex JSON payloads.
+- For JSON payloads, it reads `.type` and maps that value to a state.
+
+Note on current Codex behavior (as observed with Codex CLI `0.104.0` on February 22, 2026):
+
+- `notify` commonly emits `{"type":"agent-turn-complete", ...}`.
+- This plugin also checks recent Codex session logs and infers `R` when the latest task event for the pane's cwd is `task_started`.
+- If logs are unavailable or no running task is detected, fallback remains `W`.
+
+Window aggregation priority:
+
+`E > I > R > W`
+
+
+
+## Tests
+
+```bash
+bash tests/run-all.sh
+```
+
+This runs:
+
+- `tests/test-state-map.sh`
+- `tests/test-state-rank.sh`
+- `tests/test-window-badge.sh` (isolated tmux socket)
+- `tests/test-pane-badge.sh` (isolated tmux socket)
+- `tests/test-pane-menu.sh` (isolated tmux socket)
+- `tests/test-gc.sh` (isolated tmux socket)

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/codex-state.sh
+source "$SCRIPT_DIR/lib/codex-state.sh"
+
+if ! command -v tmux >/dev/null 2>&1; then
+    exit 0
+fi
+if [ -z "${TMUX_PANE:-}" ]; then
+    exit 0
+fi
+if ! tmux display-message -p '#{session_name}' >/dev/null 2>&1; then
+    exit 0
+fi
+
+EVENT_TYPE="$(codex_extract_event_from_notify_arg "${1:-}")"
+STATE="$(codex_map_event_to_state "$EVENT_TYPE")"
+PANE_ID="$TMUX_PANE"
+
+# Keep only per-pane state in tmux global environment so window rendering can aggregate.
+tmux set-environment -g "TMUX_CODEX_PANE_${PANE_ID}_STATE" "$STATE"
+tmux set-environment -g "TMUX_CODEX_PANE_${PANE_ID}_UPDATED_AT" "$(date +%s)"
+
+# Best-effort stale cleanup. Rendering is still correct even if cleanup fails.
+"$SCRIPT_DIR/codex-state-gc.sh" >/dev/null 2>&1 || true
+
+tmux refresh-client -S 2>/dev/null || true

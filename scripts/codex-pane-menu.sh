@@ -80,13 +80,18 @@ styled_pane_badge() {
     local state=""
     local bg_color fg_color
 
+    if [ -z "$ICON" ]; then
+        printf '\n'
+        return 0
+    fi
+
     case "$pane_badge" in
         *R) state="R" ;;
         *W) state="W" ;;
         *I) state="I" ;;
         *E) state="E" ;;
         *)
-            printf '%s\n' "$pane_badge"
+            printf '%s\n' "$ICON"
             return 0
             ;;
     esac
@@ -101,7 +106,7 @@ styled_pane_badge() {
         fi
     fi
 
-    printf '#[fg=%s,bg=%s]%s #[default]\n' "$fg_color" "$bg_color" "$pane_badge"
+    printf '#[fg=%s,bg=%s]%s#[default]\n' "$fg_color" "$bg_color" "$ICON"
 }
 
 menu_key_for_index() {
@@ -125,20 +130,11 @@ if [ -z "$TITLE" ]; then
     TITLE="Codex Panes"
 fi
 ICON="$(tmux_get_option_or_default "@codex-status-icon" "🤖")"
-SEPARATOR="$(tmux_get_option_or_default "@codex-status-separator" " ")"
-
-if [ -n "$ICON" ]; then
-    BADGE_TEMPLATE="${ICON}${SEPARATOR}W "
-else
-    BADGE_TEMPLATE="W "
-fi
-BADGE_PLACEHOLDER_WIDTH="${#BADGE_TEMPLATE}"
+BADGE_PLACEHOLDER_WIDTH="${#ICON}"
 # Emoji/non-ASCII icons are commonly rendered double-width in terminals.
-if [ -n "$ICON" ] && [[ "$ICON" =~ [^[:ascii:]] ]]; then
+if [ -n "$ICON" ] && printf '%s' "$ICON" | LC_ALL=C grep -q '[^ -~]'; then
     BADGE_PLACEHOLDER_WIDTH="$((BADGE_PLACEHOLDER_WIDTH + 1))"
 fi
-# Add one more blank for non-badge rows to keep visual alignment in display-menu.
-BADGE_PLACEHOLDER_WIDTH="$((BADGE_PLACEHOLDER_WIDTH + 1))"
 BADGE_PLACEHOLDER="$(printf '%*s' "$BADGE_PLACEHOLDER_WIDTH" '')"
 
 declare -a MENU_CMD=()
@@ -148,11 +144,11 @@ index=0
 while IFS=$'\t' read -r session_name window_index pane_index pane_id pane_label pane_badge; do
     [ -n "$pane_id" ] || continue
 
-    if [ -n "$pane_badge" ]; then
+    if [ -n "$pane_badge" ] && [ -n "$ICON" ]; then
         badge_prefix="$(styled_pane_badge "$pane_badge")"
-        label="${badge_prefix} S${session_name}:W${window_index}:P${pane_index} ${pane_label}"
+        label="${badge_prefix}S${session_name}:W${window_index}:P${pane_index} ${pane_label}"
     else
-        label="${BADGE_PLACEHOLDER} S${session_name}:W${window_index}:P${pane_index} ${pane_label}"
+        label="${BADGE_PLACEHOLDER}S${session_name}:W${window_index}:P${pane_index} ${pane_label}"
     fi
 
     label="${label//$'\t'/ }"

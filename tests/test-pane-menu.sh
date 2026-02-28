@@ -27,6 +27,17 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local label="$3"
+
+    if [[ "$haystack" == *"$needle"* ]]; then
+        printf 'FAIL: %s (unexpected=%q actual=%q)\n' "$label" "$needle" "$haystack" >&2
+        exit 1
+    fi
+}
+
 tmux_cmd -f /dev/null new-session -d -s t -n main
 tmux_cmd new-window -d -t t -n plain "sleep 120"
 
@@ -45,13 +56,13 @@ OUT="$(cat "$OUT_FILE" 2>/dev/null || true)"
 
 assert_contains "$OUT" "display-menu" "pane menu should build display-menu command"
 assert_contains "$OUT" "run-shell" "pane menu rows should execute run-shell jump action"
-assert_contains "$OUT" "🤖\\ R\\ #\\[default\\]\\ St:W0:P0\\ \\[codex\\]" "codex pane row should include one plain space before S/W/P prefix"
+assert_contains "$OUT" "🤖" "codex pane row should include icon badge"
 assert_contains "$OUT" "\\[codex\\]" "codex pane row should use [command] label format"
 assert_contains "$OUT" "#\\[fg=" "codex pane badge should include tmux style start"
 assert_contains "$OUT" ",bg=" "codex pane badge should include tmux background color"
 assert_contains "$OUT" "#\\[default\\]" "codex pane badge should reset style"
-assert_contains "$OUT" "🤖\\ R" "codex pane row should include badge"
-assert_contains "$OUT" "🤖\\ R\\ #\\[default\\]" "codex pane badge should keep trailing space before style reset"
+assert_not_contains "$OUT" "🤖\\ R" "codex pane row should not include state letter"
+assert_contains "$OUT" "#\\[default\\]St:W0:P0\\ \\[codex\\]" "codex pane row should have no separator space before S/W/P prefix"
 assert_contains "$OUT" "\\ St:W1:P0\\ \\[sleep\\]" "non-codex pane row should keep a blank badge-width prefix"
 assert_contains "$OUT" "\\[sleep\\]" "non-codex pane row should still be listed"
 

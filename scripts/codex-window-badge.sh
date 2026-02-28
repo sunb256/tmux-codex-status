@@ -217,7 +217,6 @@ state_fg_color() {
 
 ICON="$(tmux_get_option_or_default "@codex-status-icon" "🤖")"
 PROCESS_NAME="$(tmux_get_option_or_default "@codex-status-process-name" "codex")"
-SEPARATOR="$(tmux_get_option_or_default "@codex-status-separator" " ")"
 SESSIONS_DIR="$(tmux_get_option_or_default "@codex-status-sessions-dir" "${CODEX_HOME:-$HOME/.codex}/sessions")"
 SESSION_LOOKBACK_MINUTES="$(tmux_get_option_or_default "@codex-status-session-lookback-minutes" "240")"
 SESSION_SCAN_LIMIT="$(tmux_get_option_or_default "@codex-status-session-scan-limit" "40")"
@@ -293,18 +292,18 @@ if [ "$FG_COLOR" = "$BG_COLOR" ]; then
 fi
 
 if [ -n "$ICON" ]; then
-    PLAIN_BADGE="${ICON}${SEPARATOR}${WINNER_STATE}"
+    PLAIN_BADGE="${ICON}"
 else
-    PLAIN_BADGE="${WINNER_STATE}"
+    PLAIN_BADGE=""
 fi
 set_window_plain_badge "$PLAIN_BADGE"
 
 if [ "$OUTPUT_MODE" = "plain" ]; then
     printf '%s\n' "$PLAIN_BADGE"
 else
-    if [ -n "$ICON" ]; then
-        printf '#[fg=%s,bg=%s]%s%s%s #[default]\n' "$FG_COLOR" "$BG_COLOR" "$ICON" "$SEPARATOR" "$WINNER_STATE"
+    if [ -n "$PLAIN_BADGE" ]; then
+        printf '#[fg=%s,bg=%s]%s#[default]\n' "$FG_COLOR" "$BG_COLOR" "$PLAIN_BADGE"
     else
-        printf '#[fg=%s,bg=%s]%s #[default]\n' "$FG_COLOR" "$BG_COLOR" "$WINNER_STATE"
+        printf '\n'
     fi
 fi

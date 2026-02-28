@@ -1,11 +1,7 @@
 # tmux-codex-status
 
-Show Codex CLI state in tmux window list (`window-status-format`) as:
-
-- running: ` 🤖 R `
-- waiting: ` 🤖 W `
-- input required: ` 🤖 I `
-- error: ` 🤖 E `
+Show Codex CLI state in tmux window list (`window-status-format`) as a colored `🤖` badge.
+State (`R/W/I/E`) is encoded by badge color only.
 
 If a window has no Codex process, nothing is shown.
 The badge is placed at the beginning of each window item.
@@ -88,8 +84,8 @@ Internal cache/options (normally no need to edit):
 Rendering note:
 
 - Badge is rendered as a background-colored block for better visibility in `window-status-format`.
-- In the status bar, the badge is rendered before `#I: #W`.
-- The same state colors are used in `prefix+w` menu badges (`🤖 R/W/I/E`), while non-badge text remains unchanged.
+- In the status bar, the badge is rendered before `#I:#W` with no extra separator spaces.
+- The same state colors are used in `prefix+w` menu badges (`🤖`), while non-badge text remains unchanged.
 - Legacy `@codex-status-color-*` values are still read as fallback background colors.
 - If foreground and background resolve to the same color, foreground is auto-adjusted for contrast.
 
@@ -114,10 +110,10 @@ set -g @codex-status-fg-i "colour16"
 - The plugin rebinds `prefix+w` to `run-shell "scripts/codex-pane-menu.sh"`.
 - A `display-menu` pane list is shown instead of tmux's default tree.
 - Each row starts with a badge column, then `S<session>:W<window>:P<pane> [#{pane_current_command}]#{b:pane_current_path}`.
-- Codex panes show a colored `🤖 R/W/I/E` badge in that leading column, with a trailing space in the badge text.
-- Every row keeps one plain space before `S<session>...`.
+- Codex panes show a colored `🤖` badge in that leading column.
+- There is no separator space between the badge and `S<session>...` on Codex rows.
 - Non-Codex panes show no badge and use blank padding in the leading badge column so text stays aligned with Codex rows.
-- In this menu, only the badge (`🤖 R/W/I/E`) is colorized using the same `@codex-status-bg-*` and `@codex-status-fg-*` options.
+- In this menu, only the badge (`🤖`) is colorized using the same `@codex-status-bg-*` and `@codex-status-fg-*` options.
 - If your terminal font renders emoji width differently, adjust `@codex-status-icon` (or use an ASCII icon) for perfect alignment.
 - Selecting a row runs `scripts/codex-select-pane.sh` and jumps to that pane.
 - `R` in this menu is inferred from recent Codex session logs in the same way as the status bar.

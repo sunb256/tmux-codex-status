@@ -90,6 +90,10 @@ tmux_cmd set -g @codex-status-icon '🤖'
 tmux_cmd set -g @codex-status-process-name 'codex'
 tmux_cmd set -g @codex-status-sessions-dir "$SESSIONS_DIR"
 tmux_cmd set -g @codex-status-session-cache-seconds '0'
+tmux_cmd set -g @codex-status-bg-r 'colour1'
+tmux_cmd set -g @codex-status-bg-w 'colour2'
+tmux_cmd set -g @codex-status-bg-i 'colour3'
+tmux_cmd set -g @codex-status-bg-e 'colour4'
 mkdir -p "$SESSIONS_DIR"
 
 WIN_MAIN="$(tmux_cmd display-message -p -t t:main.0 '#{window_id}')"
@@ -101,20 +105,22 @@ sleep 0.1
 
 # With Codex process and no explicit state -> W
 out="$(run_badge "$WIN_MAIN")"
-assert_contains "$out" '🤖 W' 'default state is W when unset'
-assert_option_eq "$WIN_MAIN" "@codex-status-window-badge" "🤖 W" "window option badge should be updated"
+assert_contains "$out" '🤖' 'icon should be shown for codex window'
+assert_contains "$out" 'bg=colour2' 'default state W should use W background color'
+assert_not_contains "$out" '🤖 W' 'state letter should not be rendered'
+assert_option_eq "$WIN_MAIN" "@codex-status-window-badge" "🤖" "window option badge should store icon only"
 out_plain="$(run_badge "$WIN_MAIN" plain)"
-assert_contains "$out_plain" '🤖 W' 'plain mode outputs badge text'
+assert_eq "🤖" "$out_plain" 'plain mode outputs icon only'
 assert_not_contains "$out_plain" '#[' 'plain mode should not include tmux style segments'
 
 SESSION_FILE="$SESSIONS_DIR/test-running.jsonl"
 write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_started"
 out="$(run_badge "$WIN_MAIN")"
-assert_contains "$out" '🤖 R' 'task_started in session log infers R'
+assert_contains "$out" 'bg=colour1' 'task_started in session log should use R background color'
 
 write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_complete"
 out="$(run_badge "$WIN_MAIN")"
-assert_contains "$out" '🤖 W' 'task_complete in session log infers W'
+assert_contains "$out" 'bg=colour2' 'task_complete in session log should use W background color'
 
 tmux_cmd split-window -d -t t:main.0
 PANE2="$(tmux_cmd display-message -p -t t:main.1 '#{pane_id}')"
@@ -124,11 +130,11 @@ sleep 0.1
 tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE1}_STATE" 'R'
 tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE2}_STATE" 'I'
 out="$(run_badge "$WIN_MAIN")"
-assert_contains "$out" '🤖 I' 'I outranks R'
+assert_contains "$out" 'bg=colour3' 'I outranks R'
 
 tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE1}_STATE" 'E'
 out="$(run_badge "$WIN_MAIN")"
-assert_contains "$out" '🤖 E' 'E outranks I'
+assert_contains "$out" 'bg=colour4' 'E outranks I'
 
 # Window without Codex process should output empty.
 tmux_cmd new-window -d -t t -n plain "sleep 120"

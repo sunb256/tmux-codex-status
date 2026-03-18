@@ -110,16 +110,25 @@ session_latest_task_event() {
 
 codex_cwd_running_state_from_sessions() {
     local pane_path="$1"
-    local now cache_suffix cache_state_key cache_updated_key cached_state cached_updated_at inferred_state
+    local pane_window_ref="${2:-}"
+    local now cwd_suffix window_ref_key cached_window_ref
+    local cache_suffix cache_state_key cache_updated_key cached_state cached_updated_at inferred_state
     local session_file session_cwd latest_event
 
     [ -n "$pane_path" ] || return 1
+    [ -n "$pane_window_ref" ] || return 1
     [ -d "$SESSIONS_DIR" ] || return 1
     [ "$SESSION_SCAN_LIMIT" -gt 0 ] || return 1
     [ "$SESSION_LOOKBACK_MINUTES" -gt 0 ] || return 1
 
     now="$(date +%s)"
-    cache_suffix="$(printf '%s' "$pane_path" | cksum | awk '{print $1}')"
+    cwd_suffix="$(printf '%s' "$pane_path" | cksum | awk '{print $1}')"
+    window_ref_key="TMUX_CODEX_CWD_${cwd_suffix}_WINDOW_REF"
+    cached_window_ref="$(tmux_get_env "$window_ref_key")"
+    [ -n "$cached_window_ref" ] || return 1
+    [ "$cached_window_ref" = "$pane_window_ref" ] || return 1
+
+    cache_suffix="$(printf '%s\t%s' "$pane_path" "$pane_window_ref" | cksum | awk '{print $1}')"
     cache_state_key="TMUX_CODEX_CWD_${cache_suffix}_INFERRED_STATE"
     cache_updated_key="TMUX_CODEX_CWD_${cache_suffix}_INFERRED_UPDATED_AT"
 
@@ -239,14 +248,16 @@ set_window_plain_badge() {
 
 declare -a CODEX_PANES=()
 declare -A PANE_PATHS=()
-while IFS=$'\t' read -r pane_id pane_tty pane_path; do
+declare -A PANE_WINDOW_REFS=()
+while IFS=$'\t' read -r pane_id pane_tty pane_path pane_window_ref; do
     [ -n "$pane_id" ] || continue
 
     if pane_has_process "$pane_tty" "$PROCESS_NAME"; then
         CODEX_PANES+=("$pane_id")
         PANE_PATHS["$pane_id"]="$pane_path"
+        PANE_WINDOW_REFS["$pane_id"]="$pane_window_ref"
     fi
-done < <(tmux list-panes -t "$WINDOW_ID" -F '#{pane_id}	#{pane_tty}	#{pane_current_path}' 2>/dev/null || true)
+done < <(tmux list-panes -t "$WINDOW_ID" -F '#{pane_id}	#{pane_tty}	#{pane_current_path}	#{session_name}:#{window_index}' 2>/dev/null || true)
 
 if [ "${#CODEX_PANES[@]}" -eq 0 ]; then
     set_window_plain_badge ""
@@ -260,6 +271,7 @@ WINNER_RANK=0
 for pane_id in "${CODEX_PANES[@]}"; do
     pane_state="$(tmux_get_env "TMUX_CODEX_PANE_${pane_id}_STATE")"
     pane_path="${PANE_PATHS[$pane_id]:-}"
+    pane_window_ref="${PANE_WINDOW_REFS[$pane_id]:-}"
 
     if [ -z "$pane_state" ]; then
         pane_state="W"
@@ -267,7 +279,7 @@ for pane_id in "${CODEX_PANES[@]}"; do
 
     pane_state="$(codex_normalize_state "$pane_state")"
     if [ "$pane_state" = "W" ]; then
-        inferred_state="$(codex_cwd_running_state_from_sessions "$pane_path" || true)"
+        inferred_state="$(codex_cwd_running_state_from_sessions "$pane_path" "$pane_window_ref" || true)"
         if [ "$inferred_state" = "R" ]; then
             pane_state="R"
         fi

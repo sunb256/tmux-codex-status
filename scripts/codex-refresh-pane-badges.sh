@@ -96,16 +96,25 @@ session_latest_task_event() {
 
 codex_cwd_running_state_from_sessions() {
     local pane_path="$1"
-    local now cache_suffix cache_state_key cache_updated_key cached_state cached_updated_at inferred_state
+    local pane_window_ref="${2:-}"
+    local now cwd_suffix window_ref_key cached_window_ref
+    local cache_suffix cache_state_key cache_updated_key cached_state cached_updated_at inferred_state
     local session_file session_cwd latest_event
 
     [ -n "$pane_path" ] || return 1
+    [ -n "$pane_window_ref" ] || return 1
     [ -d "$SESSIONS_DIR" ] || return 1
     [ "$SESSION_SCAN_LIMIT" -gt 0 ] || return 1
     [ "$SESSION_LOOKBACK_MINUTES" -gt 0 ] || return 1
 
     now="$(date +%s)"
-    cache_suffix="$(printf '%s' "$pane_path" | cksum | awk '{print $1}')"
+    cwd_suffix="$(printf '%s' "$pane_path" | cksum | awk '{print $1}')"
+    window_ref_key="TMUX_CODEX_CWD_${cwd_suffix}_WINDOW_REF"
+    cached_window_ref="$(tmux_get_env "$window_ref_key")"
+    [ -n "$cached_window_ref" ] || return 1
+    [ "$cached_window_ref" = "$pane_window_ref" ] || return 1
+
+    cache_suffix="$(printf '%s\t%s' "$pane_path" "$pane_window_ref" | cksum | awk '{print $1}')"
     cache_state_key="TMUX_CODEX_CWD_${cache_suffix}_INFERRED_STATE"
     cache_updated_key="TMUX_CODEX_CWD_${cache_suffix}_INFERRED_UPDATED_AT"
 
@@ -175,7 +184,7 @@ if ! is_non_negative_integer "$SESSION_CACHE_SECONDS"; then
     SESSION_CACHE_SECONDS="2"
 fi
 
-while IFS=$'\t' read -r pane_id pane_tty pane_path; do
+while IFS=$'\t' read -r pane_id pane_tty pane_path pane_window_ref; do
     [ -n "$pane_id" ] || continue
 
     badge=""
@@ -186,7 +195,7 @@ while IFS=$'\t' read -r pane_id pane_tty pane_path; do
         fi
         state="$(codex_normalize_state "$state")"
         if [ "$state" = "W" ]; then
-            inferred_state="$(codex_cwd_running_state_from_sessions "$pane_path" || true)"
+            inferred_state="$(codex_cwd_running_state_from_sessions "$pane_path" "$pane_window_ref" || true)"
             if [ "$inferred_state" = "R" ]; then
                 state="R"
             fi
@@ -201,4 +210,4 @@ while IFS=$'\t' read -r pane_id pane_tty pane_path; do
     fi
 
     tmux set-option -p -q -t "$pane_id" "@codex-status-pane-badge" "$badge" 2>/dev/null || true
-done < <(tmux list-panes -a -F '#{pane_id}	#{pane_tty}	#{pane_current_path}' 2>/dev/null || true)
+done < <(tmux list-panes -a -F '#{pane_id}	#{pane_tty}	#{pane_current_path}	#{session_name}:#{window_index}' 2>/dev/null || true)

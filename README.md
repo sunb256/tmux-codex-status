@@ -135,7 +135,7 @@ Codex event -> state:
 Note on current Codex behavior (as observed with Codex CLI `0.104.0` on February 22, 2026):
 
 - `notify` commonly emits `{"type":"agent-turn-complete", ...}`.
-- This plugin also checks recent Codex session logs and infers `R` when the latest task event for the pane's cwd is `task_started`.
+- This plugin also checks recent Codex session logs and infers `R` only when both `cwd` and `session:window` match and the latest task event is `task_started`.
 - If logs are unavailable or no running task is detected, fallback remains `W`.
 
 Window aggregation priority:

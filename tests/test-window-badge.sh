@@ -146,6 +146,11 @@ assert_contains "$out_main" 'bg=colour1' 'matching window should infer R from se
 out_same="$(run_badge "$WIN_SAME")"
 assert_contains "$out_same" 'bg=colour2' 'different window with same cwd should stay W'
 
+tmux_cmd send-keys -t t:samecwd.0 "bash '$ROOT_DIR/scripts/codex-notify.sh' 'agent-turn-complete'" C-m
+sleep 0.1
+out_main="$(run_badge "$WIN_MAIN")"
+assert_contains "$out_main" 'bg=colour1' 'W event from another window should not steal cwd-window mapping'
+
 tmux_cmd split-window -d -t t:main.0
 PANE2="$(tmux_cmd display-message -p -t t:main.1 '#{pane_id}')"
 tmux_cmd send-keys -t t:main.1 "exec -a codex sleep 120" C-m

@@ -84,6 +84,15 @@ write_fake_session() {
 EOF
 }
 
+set_cwd_window_ref() {
+    local cwd="$1"
+    local window_ref="$2"
+    local cwd_suffix
+
+    cwd_suffix="$(printf '%s' "$cwd" | cksum | awk '{print $1}')"
+    tmux_cmd set-environment -g "TMUX_CODEX_CWD_${cwd_suffix}_WINDOW_REF" "$window_ref"
+}
+
 tmux_cmd -f /dev/null new-session -d -s t -n main
 
 tmux_cmd set -g @codex-status-icon '🤖'
@@ -97,6 +106,7 @@ tmux_cmd set -g @codex-status-bg-e 'colour4'
 mkdir -p "$SESSIONS_DIR"
 
 WIN_MAIN="$(tmux_cmd display-message -p -t t:main.0 '#{window_id}')"
+WIN_MAIN_REF="$(tmux_cmd display-message -p -t t:main.0 '#{session_name}:#{window_index}')"
 PANE1="$(tmux_cmd display-message -p -t t:main.0 '#{pane_id}')"
 PANE1_CWD="$(tmux_cmd display-message -p -t t:main.0 '#{pane_current_path}')"
 
@@ -115,12 +125,31 @@ assert_not_contains "$out_plain" '#[' 'plain mode should not include tmux style 
 
 SESSION_FILE="$SESSIONS_DIR/test-running.jsonl"
 write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_started"
+set_cwd_window_ref "$PANE1_CWD" "$WIN_MAIN_REF"
 out="$(run_badge "$WIN_MAIN")"
 assert_contains "$out" 'bg=colour1' 'task_started in session log should use R background color'
 
 write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_complete"
 out="$(run_badge "$WIN_MAIN")"
 assert_contains "$out" 'bg=colour2' 'task_complete in session log should use W background color'
+
+write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_started"
+set_cwd_window_ref "$PANE1_CWD" "$WIN_MAIN_REF"
+
+tmux_cmd new-window -d -t t -n samecwd -c "$PANE1_CWD"
+WIN_SAME="$(tmux_cmd display-message -p -t t:samecwd.0 '#{window_id}')"
+tmux_cmd send-keys -t t:samecwd.0 "exec -a codex sleep 120" C-m
+sleep 0.1
+
+out_main="$(run_badge "$WIN_MAIN")"
+assert_contains "$out_main" 'bg=colour1' 'matching window should infer R from session log'
+out_same="$(run_badge "$WIN_SAME")"
+assert_contains "$out_same" 'bg=colour2' 'different window with same cwd should stay W'
+
+tmux_cmd send-keys -t t:samecwd.0 "bash '$ROOT_DIR/scripts/codex-notify.sh' 'agent-turn-complete'" C-m
+sleep 0.1
+out_main="$(run_badge "$WIN_MAIN")"
+assert_contains "$out_main" 'bg=colour1' 'W event from another window should not steal cwd-window mapping'
 
 tmux_cmd split-window -d -t t:main.0
 PANE2="$(tmux_cmd display-message -p -t t:main.1 '#{pane_id}')"

@@ -4,9 +4,11 @@ set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SOCK="codex-pane-badge-test-$RANDOM-$$"
+SESSIONS_DIR="/tmp/codex-pane-badge-sessions-${SOCK}"
 
 cleanup() {
     env -u TMUX tmux -L "$SOCK" kill-server >/dev/null 2>&1 || true
+    rm -rf "$SESSIONS_DIR"
 }
 trap cleanup EXIT
 
@@ -34,15 +36,40 @@ run_refresh() {
     tmux_cmd run-shell "bash '$ROOT_DIR/scripts/codex-refresh-pane-badges.sh'"
 }
 
+write_fake_session() {
+    local file="$1"
+    local cwd="$2"
+    local event="$3"
+
+    cat > "$file" <<EOF
+{"timestamp":"2026-02-22T00:00:00.000Z","type":"session_meta","payload":{"id":"test","timestamp":"2026-02-22T00:00:00.000Z","cwd":"$cwd"}}
+{"timestamp":"2026-02-22T00:00:01.000Z","type":"event_msg","payload":{"type":"$event","turn_id":"turn-1"}}
+EOF
+}
+
+set_cwd_window_ref() {
+    local cwd="$1"
+    local window_ref="$2"
+    local cwd_suffix
+
+    cwd_suffix="$(printf '%s' "$cwd" | cksum | awk '{print $1}')"
+    tmux_cmd set-environment -g "TMUX_CODEX_CWD_${cwd_suffix}_WINDOW_REF" "$window_ref"
+}
+
 tmux_cmd -f /dev/null new-session -d -s t -n main
 tmux_cmd new-window -d -t t -n plain "sleep 120"
 
 tmux_cmd set -g @codex-status-icon '🤖'
 tmux_cmd set -g @codex-status-separator ' '
 tmux_cmd set -g @codex-status-process-name 'codex'
+tmux_cmd set -g @codex-status-sessions-dir "$SESSIONS_DIR"
+tmux_cmd set -g @codex-status-session-cache-seconds '0'
+mkdir -p "$SESSIONS_DIR"
 
 PANE_CODEX="$(tmux_cmd display-message -p -t t:main.0 '#{pane_id}')"
 PANE_PLAIN="$(tmux_cmd display-message -p -t t:plain.0 '#{pane_id}')"
+PANE_CODEX_CWD="$(tmux_cmd display-message -p -t t:main.0 '#{pane_current_path}')"
+WIN_MAIN_REF="$(tmux_cmd display-message -p -t t:main.0 '#{session_name}:#{window_index}')"
 
 tmux_cmd send-keys -t t:main.0 "exec -a codex sleep 120" C-m
 sleep 0.1
@@ -52,6 +79,20 @@ run_refresh
 
 assert_eq "🤖 R" "$(pane_badge "$PANE_CODEX")" "codex pane should get badge"
 assert_eq "" "$(pane_badge "$PANE_PLAIN")" "non-codex pane should stay empty"
+
+tmux_cmd new-window -d -t t -n samecwd -c "$PANE_CODEX_CWD"
+PANE_SAME="$(tmux_cmd display-message -p -t t:samecwd.0 '#{pane_id}')"
+tmux_cmd send-keys -t t:samecwd.0 "exec -a codex sleep 120" C-m
+sleep 0.1
+
+SESSION_FILE="$SESSIONS_DIR/test-running.jsonl"
+write_fake_session "$SESSION_FILE" "$PANE_CODEX_CWD" "task_started"
+set_cwd_window_ref "$PANE_CODEX_CWD" "$WIN_MAIN_REF"
+tmux_cmd set-environment -gu "TMUX_CODEX_PANE_${PANE_CODEX}_STATE"
+tmux_cmd set-environment -gu "TMUX_CODEX_PANE_${PANE_SAME}_STATE"
+run_refresh
+assert_eq "🤖 R" "$(pane_badge "$PANE_CODEX")" "matching window should infer R from session log"
+assert_eq "🤖 W" "$(pane_badge "$PANE_SAME")" "different window with same cwd should stay W"
 
 tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE_CODEX}_STATE" 'I'
 run_refresh

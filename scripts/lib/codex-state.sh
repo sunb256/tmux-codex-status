@@ -14,11 +14,24 @@ codex_extract_event_from_notify_arg() {
     # Codex `notify` currently passes a single JSON payload argument.
     if [[ "$raw_arg" == \{* ]]; then
         if command -v jq >/dev/null 2>&1; then
-            event_type="$(printf '%s' "$raw_arg" | jq -r '."type" // empty' 2>/dev/null || true)"
+            event_type="$(printf '%s' "$raw_arg" | jq -r '
+                if (.type? | type == "string") and (.type == "event_msg") and (.payload.type? | type == "string") then
+                    .payload.type
+                elif (.type? | type == "string") then
+                    .type
+                elif (.payload.type? | type == "string") then
+                    .payload.type
+                else
+                    empty
+                end
+            ' 2>/dev/null || true)"
         fi
 
         if [ -z "$event_type" ]; then
             # Fallback JSON parser for environments without jq.
+            event_type="$(printf '%s' "$raw_arg" | sed -n 's/.*"payload"[[:space:]]*:[[:space:]]*{[^}]*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+        fi
+        if [ -z "$event_type" ]; then
             event_type="$(printf '%s' "$raw_arg" | sed -n 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
         fi
 
@@ -37,8 +50,11 @@ codex_map_event_to_state() {
     event="${event,,}"
 
     case "$event" in
-        start|session-start|turn-start|agent-turn-start|working|running)
+        start|session-start|turn-start|agent-turn-start|task-start|task-started|task_started|working|running)
             printf 'R\n'
+            ;;
+        user-message|user_message|agent-message|agent_message|token-count|token_count)
+            printf 'K\n'
             ;;
         permission*|approv*|needs-input|input-required|ask-user|approval-requested)
             printf 'I\n'
@@ -46,7 +62,7 @@ codex_map_event_to_state() {
         error|errored|failed|fail*)
             printf 'E\n'
             ;;
-        agent-turn-complete|turn-completed|complete|completed|done|stop|waiting|idle)
+        task-complete|task_complete|turn-aborted|turn_aborted|agent-turn-complete|turn-completed|complete|completed|done|stop|waiting|idle)
             printf 'W\n'
             ;;
         *)

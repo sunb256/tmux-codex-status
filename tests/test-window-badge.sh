@@ -93,12 +93,23 @@ set_cwd_window_ref() {
     tmux_cmd set-environment -g "TMUX_CODEX_CWD_${cwd_suffix}_WINDOW_REF" "$window_ref"
 }
 
+set_cwd_window_session_file() {
+    local cwd="$1"
+    local window_ref="$2"
+    local session_file="$3"
+    local window_suffix
+
+    window_suffix="$(printf '%s\t%s' "$cwd" "$window_ref" | cksum | awk '{print $1}')"
+    tmux_cmd set-environment -g "TMUX_CODEX_CWD_${window_suffix}_SESSION_FILE" "$session_file"
+}
+
 tmux_cmd -f /dev/null new-session -d -s t -n main
 
 tmux_cmd set -g @codex-status-icon '🤖'
 tmux_cmd set -g @codex-status-process-name 'codex'
 tmux_cmd set -g @codex-status-sessions-dir "$SESSIONS_DIR"
 tmux_cmd set -g @codex-status-session-cache-seconds '0'
+tmux_cmd set -g @codex-status-stale-r-grace-seconds '5'
 tmux_cmd set -g @codex-status-bg-r 'colour1'
 tmux_cmd set -g @codex-status-bg-w 'colour2'
 tmux_cmd set -g @codex-status-bg-i 'colour3'
@@ -133,11 +144,19 @@ write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_complete"
 out="$(run_badge "$WIN_MAIN")"
 assert_contains "$out" 'bg=colour2' 'task_complete in session log should use W background color'
 
+tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE1}_STATE" 'R'
+tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE1}_UPDATED_AT" "$(( $(date +%s) - 30 ))"
+set_cwd_window_ref "$PANE1_CWD" "$WIN_MAIN_REF"
+set_cwd_window_session_file "$PANE1_CWD" "$WIN_MAIN_REF" "$SESSION_FILE"
+out="$(run_badge "$WIN_MAIN")"
+assert_contains "$out" 'bg=colour2' 'stale R should fall back to W when session log says task_complete'
+
 write_fake_session "$SESSION_FILE" "$PANE1_CWD" "task_started"
 set_cwd_window_ref "$PANE1_CWD" "$WIN_MAIN_REF"
 
 tmux_cmd new-window -d -t t -n samecwd -c "$PANE1_CWD"
 WIN_SAME="$(tmux_cmd display-message -p -t t:samecwd.0 '#{window_id}')"
+WIN_SAME_REF="$(tmux_cmd display-message -p -t t:samecwd.0 '#{session_name}:#{window_index}')"
 tmux_cmd send-keys -t t:samecwd.0 "exec -a codex sleep 120" C-m
 sleep 0.1
 
@@ -145,6 +164,31 @@ out_main="$(run_badge "$WIN_MAIN")"
 assert_contains "$out_main" 'bg=colour1' 'matching window should infer R from session log'
 out_same="$(run_badge "$WIN_SAME")"
 assert_contains "$out_same" 'bg=colour2' 'different window with same cwd should stay W'
+
+tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE1}_STATE" 'R'
+tmux_cmd send-keys -t t:main.0 "bash '$ROOT_DIR/scripts/codex-notify.sh' '{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\"}}'" C-m
+sleep 0.1
+out_main="$(run_badge "$WIN_MAIN")"
+assert_contains "$out_main" 'bg=colour1' 'user_message notify event should keep prior R state'
+
+SESSION_MAIN_ONLY="$SESSIONS_DIR/test-main-only.jsonl"
+write_fake_session "$SESSION_MAIN_ONLY" "$PANE1_CWD" "task_started"
+set_cwd_window_ref "$PANE1_CWD" "$WIN_SAME_REF"
+set_cwd_window_session_file "$PANE1_CWD" "$WIN_MAIN_REF" "$SESSION_MAIN_ONLY"
+tmux_cmd set-environment -gu "TMUX_CODEX_PANE_${PANE1}_STATE"
+out_main="$(run_badge "$WIN_MAIN")"
+assert_contains "$out_main" 'bg=colour1' 'window-specific pinned session should infer R even when cwd-window ref points elsewhere'
+
+SESSION_MAIN_PIN="$SESSIONS_DIR/test-main-pinned.jsonl"
+SESSION_OTHER_NEW="$SESSIONS_DIR/test-other-newer.jsonl"
+write_fake_session "$SESSION_MAIN_PIN" "$PANE1_CWD" "task_started"
+sleep 0.1
+write_fake_session "$SESSION_OTHER_NEW" "$PANE1_CWD" "task_complete"
+set_cwd_window_ref "$PANE1_CWD" "$WIN_MAIN_REF"
+set_cwd_window_session_file "$PANE1_CWD" "$WIN_MAIN_REF" "$SESSION_MAIN_PIN"
+tmux_cmd set-environment -gu "TMUX_CODEX_PANE_${PANE1}_STATE"
+out_main="$(run_badge "$WIN_MAIN")"
+assert_contains "$out_main" 'bg=colour1' 'pinned session file should win over newer same-cwd session logs'
 
 tmux_cmd send-keys -t t:samecwd.0 "bash '$ROOT_DIR/scripts/codex-notify.sh' 'agent-turn-complete'" C-m
 sleep 0.1

@@ -56,6 +56,16 @@ set_cwd_window_ref() {
     tmux_cmd set-environment -g "TMUX_CODEX_CWD_${cwd_suffix}_WINDOW_REF" "$window_ref"
 }
 
+set_cwd_window_session_file() {
+    local cwd="$1"
+    local window_ref="$2"
+    local session_file="$3"
+    local window_suffix
+
+    window_suffix="$(printf '%s\t%s' "$cwd" "$window_ref" | cksum | awk '{print $1}')"
+    tmux_cmd set-environment -g "TMUX_CODEX_CWD_${window_suffix}_SESSION_FILE" "$session_file"
+}
+
 tmux_cmd -f /dev/null new-session -d -s t -n main
 tmux_cmd new-window -d -t t -n plain "sleep 120"
 
@@ -64,6 +74,7 @@ tmux_cmd set -g @codex-status-separator ' '
 tmux_cmd set -g @codex-status-process-name 'codex'
 tmux_cmd set -g @codex-status-sessions-dir "$SESSIONS_DIR"
 tmux_cmd set -g @codex-status-session-cache-seconds '0'
+tmux_cmd set -g @codex-status-stale-r-grace-seconds '5'
 mkdir -p "$SESSIONS_DIR"
 
 PANE_CODEX="$(tmux_cmd display-message -p -t t:main.0 '#{pane_id}')"
@@ -82,6 +93,7 @@ assert_eq "" "$(pane_badge "$PANE_PLAIN")" "non-codex pane should stay empty"
 
 tmux_cmd new-window -d -t t -n samecwd -c "$PANE_CODEX_CWD"
 PANE_SAME="$(tmux_cmd display-message -p -t t:samecwd.0 '#{pane_id}')"
+WIN_SAME_REF="$(tmux_cmd display-message -p -t t:samecwd.0 '#{session_name}:#{window_index}')"
 tmux_cmd send-keys -t t:samecwd.0 "exec -a codex sleep 120" C-m
 sleep 0.1
 
@@ -93,6 +105,31 @@ tmux_cmd set-environment -gu "TMUX_CODEX_PANE_${PANE_SAME}_STATE"
 run_refresh
 assert_eq "🤖 R" "$(pane_badge "$PANE_CODEX")" "matching window should infer R from session log"
 assert_eq "🤖 W" "$(pane_badge "$PANE_SAME")" "different window with same cwd should stay W"
+
+SESSION_MAIN_ONLY="$SESSIONS_DIR/test-main-only.jsonl"
+write_fake_session "$SESSION_MAIN_ONLY" "$PANE_CODEX_CWD" "task_started"
+set_cwd_window_ref "$PANE_CODEX_CWD" "$WIN_SAME_REF"
+set_cwd_window_session_file "$PANE_CODEX_CWD" "$WIN_MAIN_REF" "$SESSION_MAIN_ONLY"
+tmux_cmd set-environment -gu "TMUX_CODEX_PANE_${PANE_CODEX}_STATE"
+run_refresh
+assert_eq "🤖 R" "$(pane_badge "$PANE_CODEX")" "window-specific pinned session should infer R even when cwd-window ref points elsewhere"
+
+SESSION_MAIN_PIN="$SESSIONS_DIR/test-main-pinned.jsonl"
+SESSION_OTHER_NEW="$SESSIONS_DIR/test-other-newer.jsonl"
+write_fake_session "$SESSION_MAIN_PIN" "$PANE_CODEX_CWD" "task_started"
+sleep 0.1
+write_fake_session "$SESSION_OTHER_NEW" "$PANE_CODEX_CWD" "task_complete"
+set_cwd_window_ref "$PANE_CODEX_CWD" "$WIN_MAIN_REF"
+set_cwd_window_session_file "$PANE_CODEX_CWD" "$WIN_MAIN_REF" "$SESSION_MAIN_PIN"
+run_refresh
+assert_eq "🤖 R" "$(pane_badge "$PANE_CODEX")" "pinned session file should win over newer same-cwd session logs"
+
+write_fake_session "$SESSION_MAIN_PIN" "$PANE_CODEX_CWD" "task_complete"
+tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE_CODEX}_STATE" 'R'
+tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE_CODEX}_UPDATED_AT" "$(( $(date +%s) - 30 ))"
+set_cwd_window_session_file "$PANE_CODEX_CWD" "$WIN_MAIN_REF" "$SESSION_MAIN_PIN"
+run_refresh
+assert_eq "🤖 W" "$(pane_badge "$PANE_CODEX")" "stale R should fall back to W when pinned session is task_complete"
 
 tmux_cmd set-environment -g "TMUX_CODEX_PANE_${PANE_CODEX}_STATE" 'I'
 run_refresh

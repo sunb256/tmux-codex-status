@@ -9,6 +9,7 @@ if -F '#{==:#{@codex-status-sessions-dir},}' 'set -g @codex-status-sessions-dir 
 if -F '#{==:#{@codex-status-session-lookback-minutes},}' 'set -g @codex-status-session-lookback-minutes "240"'
 if -F '#{==:#{@codex-status-session-scan-limit},}' 'set -g @codex-status-session-scan-limit "40"'
 if -F '#{==:#{@codex-status-session-cache-seconds},}' 'set -g @codex-status-session-cache-seconds "2"'
+if -F '#{==:#{@codex-status-stale-r-grace-seconds},}' 'set -g @codex-status-stale-r-grace-seconds "5"'
 
 if -F '#{==:#{@codex-status-color-r},}' 'set -g @codex-status-color-r "colour208"'
 if -F '#{==:#{@codex-status-color-w},}' 'set -g @codex-status-color-w "colour255"'

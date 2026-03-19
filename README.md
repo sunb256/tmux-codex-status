@@ -8,26 +8,23 @@ The badge is placed at the beginning of each window item.
 
 ## Files
 
-- `scripts/codex-notify.sh`: receives Codex `notify` payloads and updates per-pane state.
-- `scripts/codex-window-badge.sh`: renders one badge per window for tmux.
-- `scripts/codex-pane-menu.sh`: opens a pane menu (`display-menu`) with Codex badges.
-- `scripts/codex-select-pane.sh`: jumps to a selected pane from the menu.
-- `scripts/codex-refresh-pane-badges.sh`: updates cached plain badges for all panes.
-- `scripts/codex-state-gc.sh`: removes stale pane state from tmux env.
 - `tmux/codex-status.tmux`: tmux integration snippet.
+- `src/tmux_codex_status/*.py`: Python implementation.
 
 ## Setup
 
-1. Point Codex notify to this repo script in `~/.codex/config.toml`:
+1. Point Codex notify to the Python entry in `~/.codex/config.toml`:
 
 ```toml
-notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
+notify = ["python3", "<plugin-path>/tmux-codex-status/src/tmux_codex_status/cli.py", "notify"]
 ```
 
 2. Load tmux settings from `~/.tmux.conf`:
 
 ```tmux
 set -g @codex-status-dir '<plugin-path>/tmux-codex-status'
+# optional: override python executable
+# set -g @codex-status-python "python3"
 source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux refresh-client -S
 ```
 
@@ -37,24 +34,11 @@ source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux ref
 tmux source-file ~/.tmux.conf
 ```
 
-## Optional: keep existing notify side effects
-
-If you already use a custom notify script (sound/desktop notification), call both scripts from a wrapper:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-<plugin-path>/tmux-codex-status/scripts/codex-notify.sh "$@"
-~/.codex/hooks/notify.sh "$@" || true
-```
-
-Then set `notify` to that wrapper.
-
 ## tmux options
 
 User-facing options:
 
+- `@codex-status-python` (default `python3`)
 - `@codex-status-icon` (default `🤖`)
 - `@codex-status-process-name` (default `codex`)
 - `@codex-status-separator` (default single space)
@@ -108,15 +92,14 @@ set -g @codex-status-fg-i "colour16"
 
 `prefix+w` note:
 
-- The plugin rebinds `prefix+w` to `run-shell "scripts/codex-pane-menu.sh"`.
-- A `display-menu` pane list is shown instead of tmux's default tree.
+- The plugin rebinds `prefix+w` to a Python command that opens a `display-menu` pane list.
 - Each row starts with a badge column, then `S<session>:W<window>:P<pane> [#{pane_current_command}]#{b:pane_current_path}`.
 - Codex panes show a colored `🤖` badge in that leading column.
 - There is no separator space between the badge and `S<session>...` on Codex rows.
 - Non-Codex panes show no badge and use blank padding in the leading badge column so text stays aligned with Codex rows.
 - In this menu, only the badge (`🤖`) is colorized using the same `@codex-status-bg-*` and `@codex-status-fg-*` options.
 - If your terminal font renders emoji width differently, adjust `@codex-status-icon` (or use an ASCII icon) for perfect alignment.
-- Selecting a row runs `scripts/codex-select-pane.sh` and jumps to that pane.
+- Selecting a row jumps to that pane.
 - `R` in this menu is inferred from recent Codex session logs in the same way as the status bar.
 
 ## State mapping
@@ -147,19 +130,8 @@ Window aggregation priority:
 
 `E > I > R > W`
 
-
-
 ## Tests
 
 ```bash
-bash tests/run-all.sh
+uv run pytest
 ```
-
-This runs:
-
-- `tests/test-state-map.sh`
-- `tests/test-state-rank.sh`
-- `tests/test-window-badge.sh` (isolated tmux socket)
-- `tests/test-pane-badge.sh` (isolated tmux socket)
-- `tests/test-pane-menu.sh` (isolated tmux socket)
-- `tests/test-gc.sh` (isolated tmux socket)

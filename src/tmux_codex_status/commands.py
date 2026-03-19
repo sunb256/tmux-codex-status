@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 from .process import run_cmd
 from .session_scan import (
@@ -506,26 +506,35 @@ def base_menu_command() -> list[str]:
 def append_menu_rows(menu_cmd: list[str]) -> int:
     icon = tmux_option_or_default("@codex-status-icon", "🤖")
     placeholder = badge_placeholder(icon)
-    select_script = select_script_path()
+    prefix = python_cli_prefix()
     index = 0
     for row in menu_rows():
         label = menu_row_label(row, icon, placeholder)
         key = menu_key_for_index(index)
         index += 1
-        action = (
-            f'run-shell "bash {select_script} {row[0]} {row[1]} {row[2]}"'
-        )
+        action = build_select_action(prefix, row[0], row[1], row[2])
         menu_cmd += [label, key, action]
     return index
 
 
+def python_cli_prefix() -> str:
+    python_bin = tmux_option_or_default("@codex-status-python", "python3")
+    plugin_dir = tmux_option_or_default(
+        "@codex-status-dir",
+        os.path.expanduser("~/.tmux/plugins/tmux-codex-status"),
+    )
+    pythonpath = f"{plugin_dir}/src"
+    return (
+        f"PYTHONPATH={shlex.quote(pythonpath)} "
+        f"{shlex.quote(python_bin)} -m tmux_codex_status.cli"
+    )
 
-def select_script_path() -> str:
-    script_dir = os.environ.get("CODEX_STATUS_SCRIPT_DIR")
-    if script_dir:
-        return str(Path(script_dir) / "codex-select-pane.sh")
-    root = Path(__file__).resolve().parents[2]
-    return str(root / "scripts" / "codex-select-pane.sh")
+
+def build_select_action(prefix: str, session: str, window: str, pane: str) -> str:
+    session_q = shlex.quote(session)
+    window_q = shlex.quote(window)
+    pane_q = shlex.quote(pane)
+    return f'run-shell "{prefix} select-pane {session_q} {window_q} {pane_q}"'
 
 
 

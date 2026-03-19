@@ -2,6 +2,7 @@
 # Set @codex-status-dir in ~/.tmux.conf before sourcing this file when using a custom path.
 
 if -F '#{==:#{@codex-status-dir},}' 'set -g @codex-status-dir "$HOME/.tmux/plugins/tmux-codex-status"'
+if -F '#{==:#{@codex-status-python},}' 'set -g @codex-status-python "python3"'
 if -F '#{==:#{@codex-status-icon},}' 'set -g @codex-status-icon "🤖"'
 if -F '#{==:#{@codex-status-process-name},}' 'set -g @codex-status-process-name "codex"'
 if -F '#{==:#{@codex-status-separator},}' 'set -g @codex-status-separator " "'
@@ -27,7 +28,7 @@ if -F '#{==:#{@codex-status-fg-i},}' 'set -g @codex-status-fg-i "colour16"'
 if -F '#{==:#{@codex-status-fg-e},}' 'set -g @codex-status-fg-e "colour255"'
 
 set -g status-interval 1
-set -g window-status-format '#(bash "#{@codex-status-dir}/scripts/codex-window-badge.sh" "#{window_id}")#I:#W'
-set -g window-status-current-format '#(bash "#{@codex-status-dir}/scripts/codex-window-badge.sh" "#{window_id}")#[fg=colour255,bg=colour27,bold]#I:#W#[default]'
+set -g window-status-format '#(PYTHONPATH="#{@codex-status-dir}/src" "#{@codex-status-python}" -m tmux_codex_status.cli window-badge "#{window_id}")#I:#W'
+set -g window-status-current-format '#(PYTHONPATH="#{@codex-status-dir}/src" "#{@codex-status-python}" -m tmux_codex_status.cli window-badge "#{window_id}")#[fg=colour255,bg=colour27,bold]#I:#W#[default]'
 unbind-key -T prefix w
-bind-key -T prefix w run-shell "bash \"#{@codex-status-dir}/scripts/codex-pane-menu.sh\""
+bind-key -T prefix w run-shell 'PYTHONPATH="#{@codex-status-dir}/src" "#{@codex-status-python}" -m tmux_codex_status.cli pane-menu'

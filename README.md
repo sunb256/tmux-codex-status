@@ -28,7 +28,7 @@ notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
 
 ```tmux
 set -g @codex-status-dir '<plugin-path>/tmux-codex-status'
-source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux'
+source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux refresh-client -S
 ```
 
 3. Reload tmux:
@@ -74,6 +74,7 @@ User-facing options:
 - `@codex-status-session-lookback-minutes` (default `240`)
 - `@codex-status-session-scan-limit` (default `40`)
 - `@codex-status-session-cache-seconds` (default `2`)
+- `@codex-status-stale-r-grace-seconds` (default `5`)
 - `@codex-status-menu-title` (default `Codex Panes`)
 
 Internal cache/options (normally no need to edit):
@@ -122,10 +123,11 @@ set -g @codex-status-fg-i "colour16"
 
 Codex event -> state:
 
-- `start|session-start|turn-start|agent-turn-start|working|running` -> `R`
+- `start|session-start|turn-start|agent-turn-start|task-start|task-started|task_started|working|running` -> `R`
+- `user-message|user_message|agent-message|agent_message|token-count|token_count` -> keep previous state
 - `permission*|approv*|needs-input|input-required|ask-user|approval-requested` -> `I`
 - `error|errored|failed|fail*` -> `E`
-- `agent-turn-complete|turn-completed|complete|completed|done|stop|waiting|idle|other` -> `W`
+- `task-complete|task_complete|turn-aborted|turn_aborted|agent-turn-complete|turn-completed|complete|completed|done|stop|waiting|idle|other` -> `W`
 
 `notify` payload handling:
 
@@ -135,8 +137,11 @@ Codex event -> state:
 Note on current Codex behavior (as observed with Codex CLI `0.104.0` on February 22, 2026):
 
 - `notify` commonly emits `{"type":"agent-turn-complete", ...}`.
-- This plugin also checks recent Codex session logs and infers `R` only when both `cwd` and `session:window` match and the latest task event is `task_started`.
+- On `notify`, this plugin remembers a recent session log file per `cwd + session:window`.
+- It infers `R` only when both `cwd` and `session:window` match and that remembered file's latest task event is `task_started`.
+- If no remembered file exists and multiple recent session logs share the same `cwd`, inference is treated as ambiguous and fallback remains `W`.
 - If logs are unavailable or no running task is detected, fallback remains `W`.
+- If `R` is stale (no newer pane-state update after the grace period), a decisive session event (`task_complete|turn_aborted`) can downgrade it back to `W`.
 
 Window aggregation priority:
 

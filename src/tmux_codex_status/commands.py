@@ -197,8 +197,18 @@ def infer_or_keep_state(
     config: SessionConfig,
     now_epoch: int,
 ) -> str:
+    has_explicit_state = pane_state != ""
     state = normalize_state(pane_state or "W")
+
     if state == "W":
+        # Keep a freshly-notified W before trying session inference.
+        if has_explicit_state and not state_is_stale(
+            pane_updated_at,
+            config.stale_r_grace_seconds,
+            now_epoch,
+        ):
+            return "W"
+
         inferred = infer_state_from_sessions(
             pane_path,
             pane_window_ref,
@@ -212,7 +222,7 @@ def infer_or_keep_state(
         )
         if inferred == "R":
             return "R"
-        return state
+        return "W"
     if state != "R":
         return state
     stale = state_is_stale(pane_updated_at, config.stale_r_grace_seconds, now_epoch)

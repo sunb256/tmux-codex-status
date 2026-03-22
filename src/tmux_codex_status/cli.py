@@ -16,7 +16,6 @@ from .commands import (
     cmd_window_badge,
 )
 
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tmux-codex-status")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -50,8 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser.add_argument("pane_index", nargs="?")
     return parser
 
-
-
 def dispatch(args: argparse.Namespace) -> int:
     if args.command == "extract-event":
         return cmd_extract_event(args.raw_arg)
@@ -75,13 +72,10 @@ def dispatch(args: argparse.Namespace) -> int:
         return cmd_select_pane(args.session_name, args.window_index, args.pane_index)
     return 1
 
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     parsed = parser.parse_args(argv)
     return dispatch(parsed)
-
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))

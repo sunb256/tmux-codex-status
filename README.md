@@ -19,6 +19,12 @@ The badge is placed at the beginning of each window item.
 notify = ["python3", "<plugin-path>/tmux-codex-status/src/tmux_codex_status/cli.py", "notify"]
 ```
 
+Or use the bundled wrapper script:
+
+```toml
+notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
+```
+
 2. Load tmux settings from `~/.tmux.conf`:
 
 ```tmux

@@ -37,6 +37,39 @@ source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux ref
 tmux source-file ~/.tmux.conf
 ```
 
+## Apply changes reliably
+
+If `bind r source-file ~/.tmux.conf` is not enough in some environments, use this full reload sequence:
+
+```bash
+tmux source-file ~/.tmux.conf
+plugin_dir="$(tmux show-options -gqv @codex-status-dir)"
+tmux source-file "${plugin_dir}/tmux/codex-status.tmux"
+tmux run-shell "${plugin_dir}/scripts/codex-state-gc.sh"
+tmux refresh-client -S
+```
+
+Recommended `bind r`:
+
+```tmux
+bind r run-shell 'tmux source-file ~/.tmux.conf; tmux source-file "#{@codex-status-dir}/tmux/codex-status.tmux"; tmux run-shell "#{@codex-status-dir}/scripts/codex-state-gc.sh"; tmux refresh-client -S; tmux display "Reloaded!"'
+```
+
+Quick checks after reload:
+
+```bash
+tmux show-options -gqv @codex-status-dir
+tmux show-options -gqv window-status-format
+tmux show-options -gqv window-status-current-format
+rg '^notify\s*=' ~/.codex/config.toml
+```
+
+Notes:
+
+- If `window-status-format` or `window-status-current-format` is defined multiple times, tmux uses the last one.
+- Ensure `notify` points to `scripts/codex-notify.sh`; otherwise pane state updates will not be reflected.
+- Clearing stale `TMUX_CODEX_*` cache variables avoids old state being displayed.
+
 ## Optional: keep existing notify side effects
 
 If you already use a custom notify script (sound/desktop notification), call both scripts from a wrapper:

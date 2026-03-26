@@ -40,6 +40,27 @@ source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux ref
 tmux source-file ~/.tmux.conf
 ```
 
+## Troubleshooting (Reload / Cache Clear)
+
+If changes do not reflect in some environments, try this before `kill-server`:
+
+```bash
+# 1) Reload config and refresh UI
+tmux source-file ~/.tmux.conf
+tmux refresh-client -S
+
+# 2) Clear plugin runtime cache stored in tmux global environment
+tmux show-environment -g \
+| awk -F= '/^TMUX_CODEX_/ {print $1}' \
+| xargs -r -n1 tmux set-environment -gu
+
+# 3) Re-apply config after cache clear
+tmux source-file ~/.tmux.conf
+tmux refresh-client -S
+```
+
+`tmux kill-server` is the last resort because it closes all tmux sessions.
+
 ## tmux options
 
 User-facing options:

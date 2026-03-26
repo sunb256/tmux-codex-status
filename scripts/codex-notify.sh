@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+set -eu
 
-set -euo pipefail
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PLUGIN_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+PYTHON_BIN="${CODEX_STATUS_PYTHON:-python3}"
+EVENT_PAYLOAD="${1-}"
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib/codex-python.sh
-source "$SCRIPT_DIR/lib/codex-python.sh"
-
-codex_python notify "${1:-}"
+PYTHONPATH="$PLUGIN_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+  exec "$PYTHON_BIN" -m tmux_codex_status.cli notify "$EVENT_PAYLOAD"

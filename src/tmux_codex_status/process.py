@@ -12,10 +12,8 @@ class CmdResult:
     out: str
     err: str
 
-
 def has_command(name: str) -> bool:
     return shutil.which(name) is not None
-
 
 def run_cmd(args: Sequence[str], text_input: str | None = None) -> CmdResult:
     proc = subprocess.run(
@@ -25,6 +23,7 @@ def run_cmd(args: Sequence[str], text_input: str | None = None) -> CmdResult:
         capture_output=True,
         check=False,
     )
+
     return CmdResult(
         code=proc.returncode,
         out=proc.stdout or "",

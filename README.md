@@ -8,17 +8,18 @@ The badge is placed at the beginning of each window item.
 
 ## Files
 
-- `scripts/codex-notify.sh`: receives Codex `notify` payloads and updates per-pane state.
-- `scripts/codex-window-badge.sh`: renders one badge per window for tmux.
-- `scripts/codex-pane-menu.sh`: opens a pane menu (`display-menu`) with Codex badges.
-- `scripts/codex-select-pane.sh`: jumps to a selected pane from the menu.
-- `scripts/codex-refresh-pane-badges.sh`: updates cached plain badges for all panes.
-- `scripts/codex-state-gc.sh`: removes stale pane state from tmux env.
 - `tmux/codex-status.tmux`: tmux integration snippet.
+- `src/tmux_codex_status/*.py`: Python implementation.
 
 ## Setup
 
-1. Point Codex notify to this repo script in `~/.codex/config.toml`:
+1. Point Codex notify to the Python entry in `~/.codex/config.toml`:
+
+```toml
+notify = ["python3", "<plugin-path>/tmux-codex-status/src/tmux_codex_status/cli.py", "notify"]
+```
+
+Or use the bundled wrapper script:
 
 ```toml
 notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
@@ -28,6 +29,8 @@ notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
 
 ```tmux
 set -g @codex-status-dir '<plugin-path>/tmux-codex-status'
+# optional: override python executable
+# set -g @codex-status-python "python3"
 source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux refresh-client -S
 ```
 
@@ -37,57 +40,11 @@ source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux ref
 tmux source-file ~/.tmux.conf
 ```
 
-## Apply changes reliably
-
-If `bind r source-file ~/.tmux.conf` is not enough in some environments, use this full reload sequence:
-
-```bash
-tmux source-file ~/.tmux.conf
-plugin_dir="$(tmux show-options -gqv @codex-status-dir)"
-tmux source-file "${plugin_dir}/tmux/codex-status.tmux"
-tmux run-shell "${plugin_dir}/scripts/codex-state-gc.sh"
-tmux refresh-client -S
-```
-
-Recommended `bind r`:
-
-```tmux
-bind r run-shell 'tmux source-file ~/.tmux.conf; tmux source-file "#{@codex-status-dir}/tmux/codex-status.tmux"; tmux run-shell "#{@codex-status-dir}/scripts/codex-state-gc.sh"; tmux refresh-client -S; tmux display "Reloaded!"'
-```
-
-Quick checks after reload:
-
-```bash
-tmux show-options -gqv @codex-status-dir
-tmux show-options -gqv window-status-format
-tmux show-options -gqv window-status-current-format
-rg '^notify\s*=' ~/.codex/config.toml
-```
-
-Notes:
-
-- If `window-status-format` or `window-status-current-format` is defined multiple times, tmux uses the last one.
-- Ensure `notify` points to `scripts/codex-notify.sh`; otherwise pane state updates will not be reflected.
-- Clearing stale `TMUX_CODEX_*` cache variables avoids old state being displayed.
-
-## Optional: keep existing notify side effects
-
-If you already use a custom notify script (sound/desktop notification), call both scripts from a wrapper:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-<plugin-path>/tmux-codex-status/scripts/codex-notify.sh "$@"
-~/.codex/hooks/notify.sh "$@" || true
-```
-
-Then set `notify` to that wrapper.
-
 ## tmux options
 
 User-facing options:
 
+- `@codex-status-python` (default `python3`)
 - `@codex-status-icon` (default `🤖`)
 - `@codex-status-process-name` (default `codex`)
 - `@codex-status-separator` (default single space)
@@ -109,6 +66,7 @@ User-facing options:
 - `@codex-status-session-cache-seconds` (default `2`)
 - `@codex-status-stale-r-grace-seconds` (default `5`)
 - `@codex-status-menu-title` (default `Codex Panes`)
+- `@codex-status-log-file` (default empty; disabled)
 
 Internal cache/options (normally no need to edit):
 
@@ -121,7 +79,17 @@ Rendering note:
 - In the status bar, the badge is rendered before `#I:#W` with no extra separator spaces.
 - The same state colors are used in `prefix+w` menu badges (`🤖`), while non-badge text remains unchanged.
 - Legacy `@codex-status-color-*` values are still read as fallback background colors.
+- If a `@codex-status-bg-*` option is left at its default and matching legacy `@codex-status-color-*` is customized, the legacy color is preferred for compatibility.
 - If foreground and background resolve to the same color, foreground is auto-adjusted for contrast.
+
+Debug logging:
+
+- Set `@codex-status-log-file` to append JSONL logs for `notify` handling (event/state transitions).
+- Environment variable `CODEX_STATUS_LOG_FILE` overrides `@codex-status-log-file`.
+
+```tmux
+set -g @codex-status-log-file "$HOME/.codex/tmux-codex-status.log"
+```
 
 Color tuning example:
 
@@ -141,15 +109,14 @@ set -g @codex-status-fg-i "colour16"
 
 `prefix+w` note:
 
-- The plugin rebinds `prefix+w` to `run-shell "scripts/codex-pane-menu.sh"`.
-- A `display-menu` pane list is shown instead of tmux's default tree.
+- The plugin rebinds `prefix+w` to a Python command that opens a `display-menu` pane list.
 - Each row starts with a badge column, then `S<session>:W<window>:P<pane> [#{pane_current_command}]#{b:pane_current_path}`.
 - Codex panes show a colored `🤖` badge in that leading column.
 - There is no separator space between the badge and `S<session>...` on Codex rows.
 - Non-Codex panes show no badge and use blank padding in the leading badge column so text stays aligned with Codex rows.
 - In this menu, only the badge (`🤖`) is colorized using the same `@codex-status-bg-*` and `@codex-status-fg-*` options.
 - If your terminal font renders emoji width differently, adjust `@codex-status-icon` (or use an ASCII icon) for perfect alignment.
-- Selecting a row runs `scripts/codex-select-pane.sh` and jumps to that pane.
+- Selecting a row jumps to that pane.
 - `R` in this menu is inferred from recent Codex session logs in the same way as the status bar.
 
 ## State mapping
@@ -180,19 +147,8 @@ Window aggregation priority:
 
 `E > I > R > W`
 
-
-
 ## Tests
 
 ```bash
-bash tests/run-all.sh
+uv run pytest
 ```
-
-This runs:
-
-- `tests/test-state-map.sh`
-- `tests/test-state-rank.sh`
-- `tests/test-window-badge.sh` (isolated tmux socket)
-- `tests/test-pane-badge.sh` (isolated tmux socket)
-- `tests/test-pane-menu.sh` (isolated tmux socket)
-- `tests/test-gc.sh` (isolated tmux socket)

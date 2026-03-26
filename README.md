@@ -66,6 +66,7 @@ User-facing options:
 - `@codex-status-session-cache-seconds` (default `2`)
 - `@codex-status-stale-r-grace-seconds` (default `5`)
 - `@codex-status-menu-title` (default `Codex Panes`)
+- `@codex-status-log-file` (default empty; disabled)
 
 Internal cache/options (normally no need to edit):
 
@@ -78,7 +79,17 @@ Rendering note:
 - In the status bar, the badge is rendered before `#I:#W` with no extra separator spaces.
 - The same state colors are used in `prefix+w` menu badges (`🤖`), while non-badge text remains unchanged.
 - Legacy `@codex-status-color-*` values are still read as fallback background colors.
+- If a `@codex-status-bg-*` option is left at its default and matching legacy `@codex-status-color-*` is customized, the legacy color is preferred for compatibility.
 - If foreground and background resolve to the same color, foreground is auto-adjusted for contrast.
+
+Debug logging:
+
+- Set `@codex-status-log-file` to append JSONL logs for `notify` handling (event/state transitions).
+- Environment variable `CODEX_STATUS_LOG_FILE` overrides `@codex-status-log-file`.
+
+```tmux
+set -g @codex-status-log-file "$HOME/.codex/tmux-codex-status.log"
+```
 
 Color tuning example:
 

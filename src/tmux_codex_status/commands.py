@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from .process import run_cmd
 from .session_scan import (
@@ -32,6 +34,12 @@ from .tmux_api import (
 )
 
 WORD_RE_TEMPLATE = r"(^|[^A-Za-z0-9_]){name}($|[^A-Za-z0-9_])"
+STATE_COLOR_OPTIONS: dict[str, tuple[str, str, str, str]] = {
+    "R": ("@codex-status-bg-r", "colour88", "@codex-status-color-r", "colour208"),
+    "W": ("@codex-status-bg-w", "colour15", "@codex-status-color-w", "colour255"),
+    "I": ("@codex-status-bg-i", "colour15", "@codex-status-color-i", "colour226"),
+    "E": ("@codex-status-bg-e", "colour196", "@codex-status-color-e", "colour196"),
+}
 
 
 @dataclass(frozen=True)
@@ -89,31 +97,51 @@ def load_session_config() -> SessionConfig:
 
 
 
+def status_log_file() -> str:
+    env_log = os.environ.get("CODEX_STATUS_LOG_FILE")
+    if env_log is not None:
+        return env_log
+    return tmux_option_or_default("@codex-status-log-file", "")
+
+
+
+def log_value(value: str) -> str:
+    return value.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+
+
+
+def append_status_log(tag: str, fields: dict[str, str]) -> None:
+    log_path = status_log_file()
+    if log_path == "":
+        return
+    payload: dict[str, str] = {
+        "timestamp": str(int(time.time())),
+        "tag": tag,
+    }
+    for key, value in fields.items():
+        payload[key] = log_value(str(value))
+    path = Path(log_path).expanduser()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except OSError:
+        return
+
+
+
+def state_color_options(state: str) -> tuple[str, str, str, str]:
+    return STATE_COLOR_OPTIONS.get(state, STATE_COLOR_OPTIONS["W"])
+
+
+
 def state_bg_color(state: str) -> str:
-    if state == "R":
-        return tmux_option_or_default(
-            "@codex-status-bg-r",
-            tmux_option_or_default("@codex-status-color-r", "colour208"),
-        )
-    if state == "W":
-        return tmux_option_or_default(
-            "@codex-status-bg-w",
-            tmux_option_or_default("@codex-status-color-w", "colour240"),
-        )
-    if state == "I":
-        return tmux_option_or_default(
-            "@codex-status-bg-i",
-            tmux_option_or_default("@codex-status-color-i", "colour226"),
-        )
-    if state == "E":
-        return tmux_option_or_default(
-            "@codex-status-bg-e",
-            tmux_option_or_default("@codex-status-color-e", "colour196"),
-        )
-    return tmux_option_or_default(
-        "@codex-status-bg-w",
-        tmux_option_or_default("@codex-status-color-w", "colour240"),
-    )
+    bg_option, bg_default, color_option, color_default = state_color_options(state)
+    bg_color = tmux_option_or_default(bg_option, bg_default)
+    legacy_color = tmux_option_or_default(color_option, color_default)
+    if bg_color == bg_default and legacy_color != color_default:
+        return legacy_color
+    return bg_color
 
 
 
@@ -142,37 +170,37 @@ def adjusted_fg_color(fg_color: str, bg_color: str) -> str:
 def pane_has_process(pane_tty: str, process_name: str) -> bool:
     if not pane_tty:
         return False
-    
+
     tty_name = os.path.basename(pane_tty)
     result = run_cmd(["ps", "-t", tty_name, "-o", "command="])
-    
+
     if result.code != 0:
         return False
-    
+
     pattern = re.compile(WORD_RE_TEMPLATE.format(name=re.escape(process_name)))
-    
+
     for line in result.out.splitlines():
         if pattern.search(line):
             return True
-    
+
     return False
 
 
 
 def list_status_panes(target: str | None = None, all_panes: bool = False) -> list[PaneRow]:
     args = ["list-panes"]
-    
+
     if all_panes:
         args.append("-a")
-    
+
     if target is not None:
         args += ["-t", target]
-    
+
     args += ["-F", "#{pane_id}\t#{pane_tty}\t#{pane_current_path}\t#{session_name}:#{window_index}"]
     output = tmux_run(args).out
-    
+
     rows: list[PaneRow] = []
-    
+
     for line in output.splitlines():
         parts = line.split("\t", 3)
 
@@ -205,7 +233,7 @@ def infer_or_keep_state(
 ) -> str:
     has_explicit_state = pane_state != ""
     state = normalize_state(pane_state or "W")
-    
+
     if state == "W":
         # Keep a freshly notified W so stale session inference does not
         # immediately flip the badge back to R.
@@ -227,20 +255,20 @@ def infer_or_keep_state(
             tmux_set_env,
             now_epoch,
         )
-    
+
         if inferred == "R":
             return "R"
-    
+
         return "W"
-    
+
     if state != "R":
         return state
-    
+
     stale = state_is_stale(pane_updated_at, config.stale_r_grace_seconds, now_epoch)
-    
+
     if not stale:
         return state
-    
+
     inferred = infer_state_from_sessions(
         pane_path,
         pane_window_ref,
@@ -252,10 +280,10 @@ def infer_or_keep_state(
         tmux_set_env,
         now_epoch,
     )
-    
+
     if inferred == "W":
         return "W"
-    
+
     return state
 
 def state_is_stale(pane_updated_at: str, stale_r_grace_seconds: int, now_epoch: int) -> bool:
@@ -360,17 +388,17 @@ def styled_badge_text(plain_badge: str, state: str) -> str:
 def cmd_refresh_pane_badges() -> int:
     if not tmux_ready():
         return 0
-    
+
     icon = tmux_option_or_default("@codex-status-icon", "🤖")
     separator = tmux_option_or_default("@codex-status-separator", " ")
     process_name = tmux_option_or_default("@codex-status-process-name", "codex")
     config = load_session_config()
     now_epoch = int(time.time())
-    
+
     for row in list_status_panes(all_panes=True):
         badge = pane_badge_value(row, process_name, icon, separator, config, now_epoch)
         tmux_set_pane_option(row.pane_id, "@codex-status-pane-badge", badge)
-    
+
     return 0
 
 def pane_badge_value(
@@ -404,28 +432,39 @@ def pane_badge_value(
 def cmd_notify(raw_arg: str | None) -> int:
     if not tmux_ready():
         return 0
-    
+
     pane_id = os.environ.get("TMUX_PANE", "")
-    
+
     if pane_id == "":
         return 0
-    
+
     if tmux_display_message("#{session_name}").code != 0:
         return 0
-    
+
     event_type = extract_event_from_notify_arg(raw_arg)
-    state = map_event_to_state(event_type)
-    
+    mapped_state = map_event_to_state(event_type)
+    prev_state = tmux_get_env(pane_state_key(pane_id)) or "W"
+    state = mapped_state
     if state == "K":
-        state = tmux_get_env(pane_state_key(pane_id)) or "W"
-    
+        state = prev_state
+
     now_epoch = int(time.time())
     tmux_set_env(pane_state_key(pane_id), state)
     tmux_set_env(pane_updated_key(pane_id), str(now_epoch))
+    append_status_log(
+        "notify",
+        {
+            "pane_id": pane_id,
+            "event": event_type,
+            "mapped_state": mapped_state,
+            "state": state,
+            "prev_state": prev_state,
+        },
+    )
     remember_cwd_window_ref(pane_id, state, now_epoch)
     cmd_state_gc()
     tmux_run(["refresh-client", "-S"])
-    
+
     return 0
 
 def remember_cwd_window_ref(pane_id: str, state: str, now_epoch: int) -> None:
@@ -434,19 +473,19 @@ def remember_cwd_window_ref(pane_id: str, state: str, now_epoch: int) -> None:
 
     if pane_path == "" or window_ref == "":
         return
-    
+
     cwd_suffix = cksum_value(pane_path)
     if cwd_suffix == "":
         return
-    
+
     window_key = f"TMUX_CODEX_CWD_{cwd_suffix}_WINDOW_REF"
     updated_key = f"TMUX_CODEX_CWD_{cwd_suffix}_WINDOW_UPDATED_AT"
     current_ref = tmux_get_env(window_key)
-    
+
     if state == "R" or current_ref == "" or current_ref == window_ref:
         tmux_set_env(window_key, window_ref)
         tmux_set_env(updated_key, str(now_epoch))
-    
+
     config = load_session_config()
     session_file = find_recent_session_file_for_cwd(
         pane_path,
@@ -454,10 +493,10 @@ def remember_cwd_window_ref(pane_id: str, state: str, now_epoch: int) -> None:
         config.lookback_minutes,
         config.scan_limit,
     )
-    
+
     if not session_file:
         return
-    
+
     window_suffix = cksum_value(f"{pane_path}\t{window_ref}")
     session_key = f"TMUX_CODEX_CWD_{window_suffix}_SESSION_FILE"
     session_updated = f"TMUX_CODEX_CWD_{window_suffix}_SESSION_FILE_UPDATED_AT"
@@ -486,31 +525,31 @@ def active_pane_ids() -> set[str]:
 def stale_pane_id(env_line: str, active: set[str]) -> str:
     if env_line == "" or env_line.startswith("-"):
         return ""
-    
+
     key = env_line.split("=", 1)[0]
-    
+
     if key.startswith("TMUX_CODEX_PANE_") and key.endswith("_STATE"):
         pane_id = key.removeprefix("TMUX_CODEX_PANE_").removesuffix("_STATE")
     elif key.startswith("TMUX_CODEX_PANE_") and key.endswith("_UPDATED_AT"):
         pane_id = key.removeprefix("TMUX_CODEX_PANE_").removesuffix("_UPDATED_AT")
     else:
         return ""
-    
+
     if pane_id in active:
         return ""
-    
+
     return pane_id
 
 def cmd_select_pane(session_name: str, window_index: str, pane_index: str) -> int:
     if not session_name or not window_index or not pane_index:
         return 0
-    
+
     if not tmux_ready():
         return 0
-    
+
     target_window = f"{session_name}:{window_index}"
     target_pane = f"{target_window}.{pane_index}"
-    
+
     tmux_run(["switch-client", "-t", session_name])
     tmux_run(["select-window", "-t", target_window])
     tmux_run(["select-pane", "-t", target_pane])
@@ -556,7 +595,7 @@ def append_menu_rows(menu_cmd: list[str]) -> int:
         index += 1
         action = build_select_action(prefix, row[0], row[1], row[2])
         menu_cmd += [label, key, action]
-    
+
     return index
 
 def python_cli_prefix() -> str:
@@ -622,15 +661,15 @@ def menu_row_label(
 def styled_pane_badge(pane_badge: str, icon: str) -> str:
     if icon == "":
         return ""
-    
+
     state = badge_state(pane_badge)
-    
+
     if state == "":
         return icon
-    
+
     bg_color = state_bg_color(state)
     fg_color = adjusted_fg_color(state_fg_color(state), bg_color)
-    
+
     return f"#[fg={fg_color},bg={bg_color}]{icon}#[default]"
 
 def badge_state(pane_badge: str) -> str:

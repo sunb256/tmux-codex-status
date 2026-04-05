@@ -12,6 +12,7 @@ from .commands import (
     cmd_pane_menu,
     cmd_refresh_pane_badges,
     cmd_select_pane,
+    cmd_setup,
     cmd_state_gc,
     cmd_state_rank,
     cmd_window_badge,
@@ -45,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("pane-menu")
     sub.add_parser("state-gc")
     sub.add_parser("doctor")
+    setup_parser = sub.add_parser("setup")
+    setup_parser.add_argument("--apply", action="store_true")
+    setup_parser.add_argument("--plugin-dir")
+    setup_parser.add_argument("--tmux-conf")
+    setup_parser.add_argument("--codex-config")
 
     select_parser = sub.add_parser("select-pane")
     select_parser.add_argument("session_name", nargs="?")
@@ -73,6 +79,8 @@ def dispatch(args: argparse.Namespace) -> int:
         return cmd_state_gc()
     if args.command == "doctor":
         return cmd_doctor()
+    if args.command == "setup":
+        return cmd_setup(args.apply, args.plugin_dir, args.tmux_conf, args.codex_config)
     if args.command == "select-pane":
         return cmd_select_pane(args.session_name, args.window_index, args.pane_index)
     return 1

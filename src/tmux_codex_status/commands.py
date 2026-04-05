@@ -40,6 +40,11 @@ STATE_COLOR_OPTIONS: dict[str, tuple[str, str, str, str]] = {
     "I": ("@codex-status-bg-i", "colour15", "@codex-status-color-i", "colour226"),
     "E": ("@codex-status-bg-e", "colour196", "@codex-status-color-e", "colour196"),
 }
+TMUX_SETUP_START = "# >>> tmux-codex-status >>>"
+TMUX_SETUP_END = "# <<< tmux-codex-status <<<"
+CODEX_SETUP_START = "# >>> tmux-codex-status-notify >>>"
+CODEX_SETUP_END = "# <<< tmux-codex-status-notify <<<"
+NOTIFY_ASSIGNMENT_RE = re.compile(r"^notify\s*=")
 
 
 @dataclass(frozen=True)
@@ -196,6 +201,217 @@ def pane_has_process(pane_tty: str, process_name: str) -> bool:
 
 def default_plugin_dir() -> str:
     return os.path.expanduser("~/.tmux/plugins/tmux-codex-status")
+
+
+def detected_plugin_dir() -> str:
+    try:
+        candidate = Path(__file__).resolve().parents[2]
+    except IndexError:
+        return default_plugin_dir()
+
+    tmux_file = candidate / "tmux" / "codex-status.tmux"
+    notify_script = candidate / "scripts" / "codex-notify.sh"
+    if tmux_file.is_file() and notify_script.is_file():
+        return str(candidate)
+
+    return default_plugin_dir()
+
+
+def resolved_plugin_dir(plugin_dir: str | None) -> str:
+    if plugin_dir:
+        return str(Path(plugin_dir).expanduser().resolve())
+    return str(Path(detected_plugin_dir()).expanduser().resolve())
+
+
+def setup_tmux_file(plugin_dir: str) -> Path:
+    return Path(plugin_dir) / "tmux" / "codex-status.tmux"
+
+
+def setup_notify_script(plugin_dir: str) -> Path:
+    return Path(plugin_dir) / "scripts" / "codex-notify.sh"
+
+
+def tmux_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def toml_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def tmux_setup_block(plugin_dir: str) -> str:
+    escaped_dir = tmux_escape(plugin_dir)
+    escaped_tmux_file = tmux_escape(str(setup_tmux_file(plugin_dir)))
+    return "\n".join(
+        [
+            TMUX_SETUP_START,
+            f'set -g @codex-status-dir "{escaped_dir}"',
+            f'source-file "{escaped_tmux_file}"',
+            TMUX_SETUP_END,
+        ]
+    )
+
+
+def codex_notify_line(plugin_dir: str) -> str:
+    notify_script = toml_escape(str(setup_notify_script(plugin_dir)))
+    return f'notify = ["bash", "{notify_script}"]'
+
+
+def codex_setup_block(plugin_dir: str) -> str:
+    return "\n".join(
+        [
+            CODEX_SETUP_START,
+            codex_notify_line(plugin_dir),
+            CODEX_SETUP_END,
+        ]
+    )
+
+
+def read_text_or_empty(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def write_text_if_changed(path: Path, content: str) -> bool:
+    previous = read_text_or_empty(path)
+    if previous == content:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
+
+
+def replace_managed_block(
+    text: str,
+    start_marker: str,
+    end_marker: str,
+    replacement: str,
+) -> tuple[str, bool]:
+    replacement_text = replacement if replacement.endswith("\n") else f"{replacement}\n"
+    pattern = re.compile(
+        rf"^{re.escape(start_marker)}\n.*?^{re.escape(end_marker)}\n?",
+        re.MULTILINE | re.DOTALL,
+    )
+    if not pattern.search(text):
+        return text, False
+    return pattern.sub(replacement_text, text, count=1), True
+
+
+def append_block(text: str, block: str) -> str:
+    prefix = text
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    if prefix and not prefix.endswith("\n\n"):
+        prefix += "\n"
+    return f"{prefix}{block}\n"
+
+
+def replace_first_notify_assignment(text: str, notify_line: str) -> tuple[str, bool]:
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        line_no_nl = line.rstrip("\n")
+        stripped = line_no_nl.lstrip()
+
+        if stripped.startswith("#"):
+            continue
+
+        if not NOTIFY_ASSIGNMENT_RE.match(stripped):
+            continue
+
+        indent = line_no_nl[: len(line_no_nl) - len(stripped)]
+        suffix = "\n" if line.endswith("\n") else ""
+        replacement = f"{indent}{notify_line}{suffix}"
+        if replacement == line:
+            return text, False
+        lines[index] = replacement
+        return "".join(lines), True
+
+    return text, False
+
+
+def cmd_setup(
+    apply: bool,
+    plugin_dir: str | None,
+    tmux_conf: str | None,
+    codex_config: str | None,
+) -> int:
+    resolved_dir = resolved_plugin_dir(plugin_dir)
+    tmux_file = setup_tmux_file(resolved_dir)
+    notify_script = setup_notify_script(resolved_dir)
+
+    if not tmux_file.is_file():
+        print_line(f"[FAIL] tmux integration file was not found: {tmux_file}")
+        print_line("  hint: pass --plugin-dir with the plugin root path.")
+        return 1
+
+    if not notify_script.is_file():
+        print_line(f"[FAIL] notify wrapper script was not found: {notify_script}")
+        print_line("  hint: pass --plugin-dir with the plugin root path.")
+        return 1
+
+    tmux_conf_path = Path(tmux_conf or "~/.tmux.conf").expanduser()
+    codex_config_path = Path(codex_config or "~/.codex/config.toml").expanduser()
+
+    tmux_block = tmux_setup_block(resolved_dir)
+    notify_line = codex_notify_line(resolved_dir)
+    codex_block = codex_setup_block(resolved_dir)
+
+    if not apply:
+        print_line("Dry-run only. Use --apply to write files.")
+        print_line(f"plugin_dir: {resolved_dir}")
+        print_line("")
+        print_line(f"[{codex_config_path}]")
+        print_line(notify_line)
+        print_line("")
+        print_line(f"[{tmux_conf_path}]")
+        print_line(tmux_block)
+        print_line("")
+        print_line("Then run:")
+        print_line("tmux source-file ~/.tmux.conf")
+        return 0
+
+    try:
+        tmux_current = read_text_or_empty(tmux_conf_path)
+        tmux_next, tmux_replaced = replace_managed_block(
+            tmux_current,
+            TMUX_SETUP_START,
+            TMUX_SETUP_END,
+            tmux_block,
+        )
+        if not tmux_replaced:
+            tmux_next = append_block(tmux_next, tmux_block)
+        tmux_changed = write_text_if_changed(tmux_conf_path, tmux_next)
+    except OSError as exc:
+        print_line(f"[FAIL] Failed to update {tmux_conf_path}: {exc}")
+        return 1
+
+    try:
+        codex_current = read_text_or_empty(codex_config_path)
+        codex_next, codex_replaced_block = replace_managed_block(
+            codex_current,
+            CODEX_SETUP_START,
+            CODEX_SETUP_END,
+            codex_block,
+        )
+        if not codex_replaced_block:
+            codex_next, codex_replaced_notify = replace_first_notify_assignment(
+                codex_next,
+                notify_line,
+            )
+            if not codex_replaced_notify:
+                codex_next = append_block(codex_next, codex_block)
+        codex_changed = write_text_if_changed(codex_config_path, codex_next)
+    except OSError as exc:
+        print_line(f"[FAIL] Failed to update {codex_config_path}: {exc}")
+        return 1
+
+    tmux_status = "updated" if tmux_changed else "unchanged"
+    codex_status = "updated" if codex_changed else "unchanged"
+    print_line(f"[OK] {tmux_conf_path} ({tmux_status})")
+    print_line(f"[OK] {codex_config_path} ({codex_status})")
+    print_line("Next: tmux source-file ~/.tmux.conf")
+    return 0
 
 
 def doctor_pythonpath(plugin_dir: str) -> str:

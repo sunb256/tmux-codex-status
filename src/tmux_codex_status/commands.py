@@ -45,6 +45,7 @@ TMUX_SETUP_END = "# <<< tmux-codex-status <<<"
 CODEX_SETUP_START = "# >>> tmux-codex-status-notify >>>"
 CODEX_SETUP_END = "# <<< tmux-codex-status-notify <<<"
 NOTIFY_ASSIGNMENT_RE = re.compile(r"^notify\s*=")
+NOTIFY_ASSIGNMENT_LINE_RE = re.compile(r"^(?P<indent>[ \t]*)notify\s*=\s*(?P<rhs>.*)$")
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,13 @@ def setup_notify_script(plugin_dir: str) -> Path:
     return Path(plugin_dir) / "scripts" / "codex-notify.sh"
 
 
+def default_codex_config_path() -> Path:
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser() / "config.toml"
+    return Path("~/.codex/config.toml").expanduser()
+
+
 def tmux_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -307,6 +315,76 @@ def append_block(text: str, block: str) -> str:
     return f"{prefix}{block}\n"
 
 
+def strip_inline_comment(value: str) -> str:
+    result: list[str] = []
+    in_quote = ""
+    escape = False
+    for char in value:
+        if escape:
+            result.append(char)
+            escape = False
+            continue
+        if char == "\\" and in_quote == '"':
+            result.append(char)
+            escape = True
+            continue
+        if in_quote:
+            result.append(char)
+            if char == in_quote:
+                in_quote = ""
+            continue
+        if char in {'"', "'"}:
+            in_quote = char
+            result.append(char)
+            continue
+        if char == "#":
+            break
+        result.append(char)
+    return "".join(result)
+
+
+def bracket_delta(value: str) -> int:
+    delta = 0
+    in_quote = ""
+    escape = False
+    for char in value:
+        if escape:
+            escape = False
+            continue
+        if char == "\\" and in_quote == '"':
+            escape = True
+            continue
+        if in_quote:
+            if char == in_quote:
+                in_quote = ""
+            continue
+        if char in {'"', "'"}:
+            in_quote = char
+            continue
+        if char == "[":
+            delta += 1
+            continue
+        if char == "]":
+            delta -= 1
+    return delta
+
+
+def notify_assignment_end_index(lines: list[str], start_index: int, rhs: str) -> int:
+    cleaned_rhs = strip_inline_comment(rhs).strip()
+    if not cleaned_rhs.startswith("["):
+        return start_index
+
+    depth = bracket_delta(cleaned_rhs)
+    end_index = start_index
+
+    while depth > 0 and end_index + 1 < len(lines):
+        end_index += 1
+        segment = strip_inline_comment(lines[end_index].rstrip("\n"))
+        depth += bracket_delta(segment)
+
+    return end_index
+
+
 def replace_first_notify_assignment(text: str, notify_line: str) -> tuple[str, bool]:
     lines = text.splitlines(keepends=True)
     for index, line in enumerate(lines):
@@ -319,12 +397,21 @@ def replace_first_notify_assignment(text: str, notify_line: str) -> tuple[str, b
         if not NOTIFY_ASSIGNMENT_RE.match(stripped):
             continue
 
-        indent = line_no_nl[: len(line_no_nl) - len(stripped)]
-        suffix = "\n" if line.endswith("\n") else ""
+        match = NOTIFY_ASSIGNMENT_LINE_RE.match(line_no_nl)
+        if not match:
+            continue
+
+        indent = match.group("indent")
+        rhs = match.group("rhs")
+        end_index = notify_assignment_end_index(lines, index, rhs)
+        suffix = "\n" if lines[end_index].endswith("\n") else ""
         replacement = f"{indent}{notify_line}{suffix}"
-        if replacement == line:
+
+        current = "".join(lines[index : end_index + 1])
+        if current == replacement:
             return text, False
-        lines[index] = replacement
+
+        lines[index : end_index + 1] = [replacement]
         return "".join(lines), True
 
     return text, False
@@ -351,7 +438,9 @@ def cmd_setup(
         return 1
 
     tmux_conf_path = Path(tmux_conf or "~/.tmux.conf").expanduser()
-    codex_config_path = Path(codex_config or "~/.codex/config.toml").expanduser()
+    codex_config_path = (
+        Path(codex_config).expanduser() if codex_config else default_codex_config_path()
+    )
 
     tmux_block = tmux_setup_block(resolved_dir)
     notify_line = codex_notify_line(resolved_dir)

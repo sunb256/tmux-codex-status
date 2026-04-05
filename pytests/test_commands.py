@@ -349,6 +349,34 @@ def test_cmd_setup_apply_replaces_existing_notify_assignment(tmp_path: Path) -> 
     assert commands.CODEX_SETUP_START not in codex_text
 
 
+def test_cmd_setup_apply_replaces_multiline_notify_assignment(tmp_path: Path) -> None:
+    plugin_dir = create_plugin_layout(tmp_path)
+    tmux_conf = tmp_path / "tmux.conf"
+    codex_config = tmp_path / "config.toml"
+    codex_config.write_text(
+        "\n".join(
+            [
+                'model = "gpt-5"',
+                "notify = [",
+                '  "bash",',
+                '  "/tmp/old-notify.sh",',
+                "]",
+                'theme = "dark"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert commands.cmd_setup(True, str(plugin_dir), str(tmux_conf), str(codex_config)) == 0
+
+    codex_text = codex_config.read_text(encoding="utf-8")
+    assert "/tmp/old-notify.sh" not in codex_text
+    assert "\n]\n" not in codex_text
+    assert f'notify = ["bash", "{plugin_dir / "scripts" / "codex-notify.sh"}"]' in codex_text
+    assert 'theme = "dark"' in codex_text
+
+
 def test_cmd_setup_dry_run_does_not_write_files(tmp_path: Path, capsys) -> None:
     plugin_dir = create_plugin_layout(tmp_path)
     tmux_conf = tmp_path / "tmux.conf"
@@ -359,3 +387,8 @@ def test_cmd_setup_dry_run_does_not_write_files(tmp_path: Path, capsys) -> None:
     assert "Dry-run only" in output
     assert not tmux_conf.exists()
     assert not codex_config.exists()
+
+
+def test_default_codex_config_path_uses_codex_home(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    assert commands.default_codex_config_path() == tmp_path / "config.toml"

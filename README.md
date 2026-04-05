@@ -52,7 +52,9 @@ tmux refresh-client -S
 # 2) Clear plugin runtime cache stored in tmux global environment
 tmux show-environment -g \
 | awk -F= '/^TMUX_CODEX_/ {print $1}' \
-| xargs -r -n1 tmux set-environment -gu
+| while IFS= read -r key; do
+    [ -n "$key" ] && tmux set-environment -gu "$key"
+  done
 
 # 3) Re-apply config after cache clear
 tmux source-file ~/.tmux.conf
@@ -60,6 +62,29 @@ tmux refresh-client -S
 ```
 
 `tmux kill-server` is the last resort because it closes all tmux sessions.
+
+## Doctor
+
+When the icon does not show, run the built-in diagnostic from inside a tmux pane:
+
+```bash
+PYTHONPATH="$(tmux show -gv @codex-status-dir)/src" \
+"$(tmux show -gv @codex-status-python)" \
+-m tmux_codex_status.cli doctor
+```
+
+If the two tmux options are not set yet, use defaults:
+
+```bash
+PYTHONPATH="$HOME/.tmux/plugins/tmux-codex-status/src" \
+python3 -m tmux_codex_status.cli doctor
+```
+
+`doctor` output levels:
+
+- `PASS`: check succeeded.
+- `WARN`: likely context issue (for example, not running inside a Codex pane right now).
+- `FAIL`: blocking issue. The command exits with status `1` when at least one `FAIL` exists.
 
 ## tmux options
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tmux_codex_status import commands
 from tmux_codex_status.commands import SessionConfig
+from tmux_codex_status.process import CmdResult
 
 
 def session_config(stale_r_grace_seconds: int = 5) -> SessionConfig:
@@ -129,3 +130,166 @@ def test_append_status_log_writes_json_line(tmp_path: Path, monkeypatch) -> None
     assert payload["pane_id"] == "%1"
     assert payload["event"] == "task_started next"
     assert payload["state"] == "R"
+
+
+def configure_doctor_happy_path(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    pane_has_codex: bool = True,
+    window_status_ok: bool = True,
+    module_ok: bool = True,
+    python_ok: bool = True,
+) -> None:
+    plugin_dir = tmp_path / "plugin"
+    (plugin_dir / "src" / "tmux_codex_status").mkdir(parents=True)
+
+    monkeypatch.setattr(commands, "has_command", lambda name: name == "tmux")
+    monkeypatch.setattr(commands, "tmux_ready", lambda: True)
+
+    def fake_option_or_default(option: str, default: str) -> str:
+        options = {
+            "@codex-status-dir": str(plugin_dir),
+            "@codex-status-python": "python3",
+            "@codex-status-process-name": "codex",
+        }
+        return options.get(option, default)
+
+    monkeypatch.setattr(commands, "tmux_option_or_default", fake_option_or_default)
+
+    def fake_run_cmd(args, text_input=None):
+        if args == ["python3", "--version"]:
+            if python_ok:
+                return CmdResult(0, "Python 3.11.9\n", "")
+            return CmdResult(1, "", "python3 not found")
+        return CmdResult(0, "", "")
+
+    monkeypatch.setattr(commands, "run_cmd", fake_run_cmd)
+    if module_ok:
+        monkeypatch.setattr(commands, "run_doctor_module_check", lambda *_: (True, "R"))
+    else:
+        monkeypatch.setattr(
+            commands,
+            "run_doctor_module_check",
+            lambda *_: (False, "import failed"),
+        )
+
+    needle = "tmux_codex_status.cli window-badge"
+
+    def fake_tmux_run(args):
+        if args == ["show-option", "-gqv", "window-status-format"]:
+            if window_status_ok:
+                return CmdResult(0, f"#({needle} \"#{{window_id}}\")#I:#W\n", "")
+            return CmdResult(0, "#I:#W\n", "")
+        if args == ["show-option", "-gqv", "window-status-current-format"]:
+            return CmdResult(0, f"#({needle} \"#{{window_id}}\")#I:#W\n", "")
+        return CmdResult(0, "", "")
+
+    monkeypatch.setattr(commands, "tmux_run", fake_tmux_run)
+    monkeypatch.setenv("TMUX_PANE", "%1")
+
+    def fake_pane_value(pane_id: str, fmt: str) -> str:
+        if fmt == "#{pane_tty}":
+            return "/dev/ttys001"
+        if fmt == "#{window_id}":
+            return "@1"
+        return ""
+
+    monkeypatch.setattr(commands, "tmux_pane_value", fake_pane_value)
+    monkeypatch.setattr(commands, "pane_has_process", lambda *_: pane_has_codex)
+    monkeypatch.setattr(commands, "run_doctor_window_badge_check", lambda *_: (0, "🤖"))
+
+
+def test_cmd_doctor_returns_zero_when_all_required_checks_pass(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    configure_doctor_happy_path(monkeypatch, tmp_path)
+
+    assert commands.cmd_doctor() == 0
+    output = capsys.readouterr().out
+    assert "Summary:" in output
+    assert "0 FAIL" in output
+
+
+def test_cmd_doctor_fails_when_tmux_is_missing(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(commands, "has_command", lambda *_: False)
+    monkeypatch.setattr(
+        commands,
+        "run_cmd",
+        lambda *_args, **_kwargs: CmdResult(0, "Python 3.11.9", ""),
+    )
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+
+    assert commands.cmd_doctor() == 1
+    output = capsys.readouterr().out
+    assert "[FAIL] tmux command" in output
+
+
+def test_cmd_doctor_fails_when_window_status_format_is_not_configured(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    configure_doctor_happy_path(monkeypatch, tmp_path, window_status_ok=False)
+
+    assert commands.cmd_doctor() == 1
+    output = capsys.readouterr().out
+    assert "[FAIL] window-status-format" in output
+
+
+def test_cmd_doctor_warns_when_codex_process_not_detected(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    configure_doctor_happy_path(monkeypatch, tmp_path, pane_has_codex=False)
+
+    assert commands.cmd_doctor() == 0
+    output = capsys.readouterr().out
+    assert "[WARN] pane process detection" in output
+
+
+def test_cmd_doctor_fails_when_module_invocation_fails(tmp_path: Path, monkeypatch, capsys) -> None:
+    configure_doctor_happy_path(monkeypatch, tmp_path, module_ok=False)
+
+    assert commands.cmd_doctor() == 1
+    output = capsys.readouterr().out
+    assert "[FAIL] module invocation" in output
+
+
+def test_cmd_notify_falls_back_to_display_message_pane_id(monkeypatch) -> None:
+    set_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(commands, "tmux_ready", lambda: True)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+
+    def fake_display_message(fmt: str, target: str | None = None) -> CmdResult:
+        if fmt == "#{pane_id}":
+            return CmdResult(0, "%42\n", "")
+        if fmt == "#{session_name}":
+            return CmdResult(0, "s\n", "")
+        return CmdResult(1, "", "unsupported")
+
+    monkeypatch.setattr(commands, "tmux_display_message", fake_display_message)
+    monkeypatch.setattr(commands, "tmux_get_env", lambda *_: "")
+    monkeypatch.setattr(commands, "tmux_set_env", lambda key, value: set_calls.append((key, value)))
+    monkeypatch.setattr(commands, "append_status_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(commands, "remember_cwd_window_ref", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(commands, "cmd_state_gc", lambda: 0)
+    monkeypatch.setattr(commands, "tmux_run", lambda *_args, **_kwargs: CmdResult(0, "", ""))
+
+    assert commands.cmd_notify("task_started") == 0
+    assert ("TMUX_CODEX_PANE_%42_STATE", "R") in set_calls
+
+
+def test_cmd_notify_returns_without_pane_id(monkeypatch) -> None:
+    monkeypatch.setattr(commands, "tmux_ready", lambda: True)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    monkeypatch.setattr(
+        commands,
+        "tmux_display_message",
+        lambda *_args, **_kwargs: CmdResult(0, "", ""),
+    )
+    monkeypatch.setattr(
+        commands,
+        "tmux_set_env",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError),
+    )
+
+    assert commands.cmd_notify("task_started") == 0

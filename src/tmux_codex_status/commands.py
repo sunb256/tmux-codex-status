@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .process import run_cmd
+from .process import has_command, run_cmd
 from .session_scan import (
     cksum_value,
     find_recent_session_file_for_cwd,
@@ -57,6 +57,14 @@ class PaneRow:
     pane_tty: str
     pane_path: str
     pane_window_ref: str
+
+
+@dataclass(frozen=True)
+class DoctorCheck:
+    status: str
+    name: str
+    detail: str
+    hint: str = ""
 
 
 
@@ -184,6 +192,86 @@ def pane_has_process(pane_tty: str, process_name: str) -> bool:
             return True
 
     return False
+
+
+def default_plugin_dir() -> str:
+    return os.path.expanduser("~/.tmux/plugins/tmux-codex-status")
+
+
+def doctor_pythonpath(plugin_dir: str) -> str:
+    plugin_src = f"{plugin_dir}/src"
+    current = os.environ.get("PYTHONPATH", "")
+    if current == "":
+        return plugin_src
+    return f"{plugin_src}:{current}"
+
+
+def add_doctor_check(
+    checks: list[DoctorCheck],
+    status: str,
+    name: str,
+    detail: str,
+    hint: str = "",
+) -> None:
+    checks.append(DoctorCheck(status, name, detail, hint))
+
+
+def print_doctor_checks(checks: list[DoctorCheck]) -> None:
+    for check in checks:
+        print_line(f"[{check.status}] {check.name}: {check.detail}")
+        if check.hint:
+            print_line(f"  hint: {check.hint}")
+
+
+def doctor_summary(checks: list[DoctorCheck]) -> tuple[int, int, int]:
+    pass_count = sum(1 for check in checks if check.status == "PASS")
+    warn_count = sum(1 for check in checks if check.status == "WARN")
+    fail_count = sum(1 for check in checks if check.status == "FAIL")
+    return pass_count, warn_count, fail_count
+
+
+def run_doctor_module_check(python_bin: str, plugin_dir: str) -> tuple[bool, str]:
+    result = run_cmd(
+        [
+            "env",
+            f"PYTHONPATH={doctor_pythonpath(plugin_dir)}",
+            python_bin,
+            "-m",
+            "tmux_codex_status.cli",
+            "map-event",
+            "task_started",
+        ]
+    )
+
+    if result.code != 0:
+        detail = result.err.strip() or result.out.strip() or "map-event command failed."
+        return False, detail
+
+    output = result.out.strip()
+    if output == "R":
+        return True, output
+
+    return False, f"Unexpected output: {output!r}"
+
+
+def run_doctor_window_badge_check(
+    python_bin: str,
+    plugin_dir: str,
+    window_id: str,
+) -> tuple[int, str]:
+    result = run_cmd(
+        [
+            "env",
+            f"PYTHONPATH={doctor_pythonpath(plugin_dir)}",
+            python_bin,
+            "-m",
+            "tmux_codex_status.cli",
+            "window-badge",
+            window_id,
+            "plain",
+        ]
+    )
+    return result.code, result.out.strip()
 
 
 
@@ -434,6 +522,8 @@ def cmd_notify(raw_arg: str | None) -> int:
         return 0
 
     pane_id = os.environ.get("TMUX_PANE", "")
+    if pane_id == "":
+        pane_id = tmux_display_message("#{pane_id}").out.rstrip("\n")
 
     if pane_id == "":
         return 0
@@ -517,6 +607,262 @@ def cmd_state_gc() -> int:
         tmux_unset_env(pane_state_key(stale_pane))
         tmux_unset_env(pane_updated_key(stale_pane))
     return 0
+
+def cmd_doctor() -> int:
+    checks: list[DoctorCheck] = []
+
+    tmux_exists = has_command("tmux")
+    if tmux_exists:
+        add_doctor_check(checks, "PASS", "tmux command", "tmux is available in PATH.")
+    else:
+        add_doctor_check(
+            checks,
+            "FAIL",
+            "tmux command",
+            "tmux command was not found in PATH.",
+            "Install tmux and make sure `tmux` is executable in your shell.",
+        )
+
+    ready = False
+    if tmux_exists:
+        ready = tmux_ready()
+        if ready:
+            add_doctor_check(checks, "PASS", "tmux server", "tmux server is reachable.")
+        else:
+            add_doctor_check(
+                checks,
+                "FAIL",
+                "tmux server",
+                "tmux server is not reachable.",
+                "Start tmux and run doctor from inside an active tmux session.",
+            )
+
+    plugin_dir = default_plugin_dir()
+    if ready:
+        plugin_dir = tmux_option_or_default("@codex-status-dir", default_plugin_dir())
+
+    plugin_src = Path(plugin_dir).expanduser() / "src" / "tmux_codex_status"
+    if plugin_dir == "":
+        add_doctor_check(
+            checks,
+            "FAIL",
+            "@codex-status-dir",
+            "Plugin directory option is empty.",
+            "Set `@codex-status-dir` to the plugin root path in `.tmux.conf`.",
+        )
+    elif plugin_src.is_dir():
+        add_doctor_check(
+            checks,
+            "PASS",
+            "@codex-status-dir",
+            f"Resolved plugin package path exists: {plugin_src}.",
+        )
+    else:
+        add_doctor_check(
+            checks,
+            "FAIL",
+            "@codex-status-dir",
+            f"Expected package path was not found: {plugin_src}.",
+            "Set `@codex-status-dir` correctly and reload tmux config.",
+        )
+
+    python_bin = "python3"
+    if ready:
+        python_bin = tmux_option_or_default("@codex-status-python", "python3")
+
+    python_result = run_cmd([python_bin, "--version"])
+    if python_result.code == 0:
+        version_text = python_result.out.strip() or python_result.err.strip() or "version ok"
+        add_doctor_check(
+            checks,
+            "PASS",
+            "@codex-status-python",
+            f"Python command works ({version_text}).",
+        )
+    else:
+        detail = python_result.err.strip() or python_result.out.strip() or "command failed."
+        add_doctor_check(
+            checks,
+            "FAIL",
+            "@codex-status-python",
+            f"Python command failed: {detail}",
+            "Set `@codex-status-python` to a valid Python executable.",
+        )
+
+    module_ok = False
+    if python_result.code == 0 and plugin_dir != "":
+        module_ok, module_detail = run_doctor_module_check(python_bin, plugin_dir)
+        if module_ok:
+            add_doctor_check(
+                checks,
+                "PASS",
+                "module invocation",
+                "tmux_codex_status module command succeeded (map-event -> R).",
+            )
+        else:
+            add_doctor_check(
+                checks,
+                "FAIL",
+                "module invocation",
+                f"Module invocation failed: {module_detail}",
+                "Verify `@codex-status-dir` and `@codex-status-python` values.",
+            )
+    else:
+        add_doctor_check(
+            checks,
+            "FAIL",
+            "module invocation",
+            "Skipped because Python executable or plugin path check failed.",
+            "Fix earlier FAIL items and run doctor again.",
+        )
+
+    if ready:
+        format_value = tmux_run(["show-option", "-gqv", "window-status-format"]).out.rstrip("\n")
+        needle = "tmux_codex_status.cli window-badge"
+        if needle in format_value:
+            add_doctor_check(
+                checks,
+                "PASS",
+                "window-status-format",
+                "window-status-format includes tmux_codex_status window-badge command.",
+            )
+        else:
+            add_doctor_check(
+                checks,
+                "FAIL",
+                "window-status-format",
+                "window-status-format does not include tmux_codex_status window-badge command.",
+                "Source `tmux/codex-status.tmux` and reload tmux config.",
+            )
+
+        current_format_result = tmux_run(["show-option", "-gqv", "window-status-current-format"])
+        current_format = current_format_result.out.rstrip("\n")
+        if needle in current_format:
+            add_doctor_check(
+                checks,
+                "PASS",
+                "window-status-current-format",
+                "window-status-current-format includes tmux_codex_status window-badge command.",
+            )
+        else:
+            add_doctor_check(
+                checks,
+                "WARN",
+                "window-status-current-format",
+                (
+                    "window-status-current-format does not include "
+                    "tmux_codex_status window-badge command."
+                ),
+                "Source `tmux/codex-status.tmux` and reload tmux config.",
+            )
+    else:
+        add_doctor_check(
+            checks,
+            "WARN",
+            "window-status-format",
+            "Skipped because tmux server check failed.",
+            "Fix tmux server access and run doctor again.",
+        )
+
+    pane_id = os.environ.get("TMUX_PANE", "")
+    if not ready:
+        add_doctor_check(
+            checks,
+            "WARN",
+            "pane process detection",
+            "Skipped because tmux server check failed.",
+            "Run doctor from inside tmux.",
+        )
+    elif pane_id == "":
+        add_doctor_check(
+            checks,
+            "WARN",
+            "pane process detection",
+            "TMUX_PANE is not set.",
+            "Run doctor from inside a tmux pane where Codex runs.",
+        )
+    else:
+        pane_tty = tmux_pane_value(pane_id, "#{pane_tty}")
+        process_name = tmux_option_or_default("@codex-status-process-name", "codex")
+        has_process = pane_has_process(pane_tty, process_name)
+        if has_process:
+            add_doctor_check(
+                checks,
+                "PASS",
+                "pane process detection",
+                f"Process `{process_name}` detected on {pane_tty}.",
+            )
+        else:
+            add_doctor_check(
+                checks,
+                "WARN",
+                "pane process detection",
+                f"Process `{process_name}` was not detected on {pane_tty}.",
+                "Start Codex in this pane or adjust `@codex-status-process-name`.",
+            )
+
+        window_id = tmux_pane_value(pane_id, "#{window_id}")
+        if window_id == "":
+            add_doctor_check(
+                checks,
+                "WARN",
+                "window-badge command",
+                "Current window id could not be resolved.",
+                "Run doctor from an active tmux pane.",
+            )
+        elif not module_ok:
+            add_doctor_check(
+                checks,
+                "FAIL",
+                "window-badge command",
+                "Skipped because module invocation check failed.",
+                "Fix module invocation FAIL first.",
+            )
+        else:
+            badge_code, badge_text = run_doctor_window_badge_check(
+                python_bin,
+                plugin_dir,
+                window_id,
+            )
+            if badge_code != 0:
+                add_doctor_check(
+                    checks,
+                    "FAIL",
+                    "window-badge command",
+                    "window-badge command failed.",
+                    "Verify Python/module configuration and plugin path.",
+                )
+            elif has_process and badge_text == "":
+                add_doctor_check(
+                    checks,
+                    "FAIL",
+                    "window-badge command",
+                    "window-badge returned empty output while Codex process is detected.",
+                    "Verify process detection and tmux format configuration.",
+                )
+            elif has_process:
+                add_doctor_check(
+                    checks,
+                    "PASS",
+                    "window-badge command",
+                    f"window-badge returned {badge_text!r}.",
+                )
+            else:
+                add_doctor_check(
+                    checks,
+                    "WARN",
+                    "window-badge command",
+                    (
+                        "Skipped strict badge assertion because Codex process "
+                        "is not currently detected."
+                    ),
+                    "Run doctor while Codex is active in this pane.",
+                )
+
+    print_doctor_checks(checks)
+    pass_count, warn_count, fail_count = doctor_summary(checks)
+    print_line(f"Summary: {pass_count} PASS, {warn_count} WARN, {fail_count} FAIL")
+    return 1 if fail_count > 0 else 0
 
 def active_pane_ids() -> set[str]:
     output = tmux_run(["list-panes", "-a", "-F", "#{pane_id}"]).out

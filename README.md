@@ -9,35 +9,32 @@ The badge is placed at the beginning of each window item.
 ## Files
 
 - `tmux/codex-status.tmux`: tmux integration snippet.
+- `scripts/setup.sh`: one-command setup (`~/.codex/config.toml` + `~/.tmux.conf`).
 - `src/tmux_codex_status/*.py`: Python implementation.
 
 ## Setup
 
-1. Point Codex notify to the Python entry in `~/.codex/config.toml`:
+Recommended (auto-setup):
 
-```toml
-notify = ["python3", "<plugin-path>/tmux-codex-status/src/tmux_codex_status/cli.py", "notify"]
+1. Run:
+
+```bash
+bash <plugin-path>/tmux-codex-status/scripts/setup.sh
 ```
 
-Or use the bundled wrapper script:
+This updates both `~/.codex/config.toml` (`notify`) and `~/.tmux.conf` (plugin source block).
 
-```toml
-notify = ["bash", "<plugin-path>/tmux-codex-status/scripts/codex-notify.sh"]
-```
-
-2. Load tmux settings from `~/.tmux.conf`:
-
-```tmux
-set -g @codex-status-dir '<plugin-path>/tmux-codex-status'
-# optional: override python executable
-# set -g @codex-status-python "python3"
-source-file '<plugin-path>/tmux-codex-status/tmux/codex-status.tmux' && tmux refresh-client -S
-```
-
-3. Reload tmux:
+2. Reload tmux:
 
 ```bash
 tmux source-file ~/.tmux.conf
+```
+
+Manual preview without writing files:
+
+```bash
+PYTHONPATH="<plugin-path>/tmux-codex-status/src" \
+python3 -m tmux_codex_status.cli setup --plugin-dir "<plugin-path>/tmux-codex-status"
 ```
 
 ## Troubleshooting (Reload / Cache Clear)

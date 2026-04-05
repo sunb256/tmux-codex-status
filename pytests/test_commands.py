@@ -18,6 +18,18 @@ def session_config(stale_r_grace_seconds: int = 5) -> SessionConfig:
     )
 
 
+def create_plugin_layout(tmp_path: Path) -> Path:
+    plugin_dir = tmp_path / "plugin"
+    (plugin_dir / "tmux").mkdir(parents=True)
+    (plugin_dir / "scripts").mkdir(parents=True)
+    (plugin_dir / "tmux" / "codex-status.tmux").write_text("# mock\n", encoding="utf-8")
+    (plugin_dir / "scripts" / "codex-notify.sh").write_text(
+        "#!/usr/bin/env bash\n",
+        encoding="utf-8",
+    )
+    return plugin_dir
+
+
 def test_infer_or_keep_state_keeps_fresh_explicit_w(monkeypatch) -> None:
     monkeypatch.setattr(commands, "infer_state_from_sessions", lambda *args, **kwargs: "R")
 
@@ -293,3 +305,57 @@ def test_cmd_notify_returns_without_pane_id(monkeypatch) -> None:
     )
 
     assert commands.cmd_notify("task_started") == 0
+
+
+def test_cmd_setup_apply_updates_tmux_and_codex_configs(tmp_path: Path, capsys) -> None:
+    plugin_dir = create_plugin_layout(tmp_path)
+    tmux_conf = tmp_path / "tmux.conf"
+    codex_config = tmp_path / "config.toml"
+    tmux_conf.write_text("set -g mouse on\n", encoding="utf-8")
+    codex_config.write_text('model = "gpt-5"\n', encoding="utf-8")
+
+    assert commands.cmd_setup(True, str(plugin_dir), str(tmux_conf), str(codex_config)) == 0
+    output = capsys.readouterr().out
+    assert "[OK]" in output
+
+    tmux_text = tmux_conf.read_text(encoding="utf-8")
+    assert commands.TMUX_SETUP_START in tmux_text
+    assert f'source-file "{plugin_dir / "tmux" / "codex-status.tmux"}"' in tmux_text
+
+    codex_text = codex_config.read_text(encoding="utf-8")
+    assert f'notify = ["bash", "{plugin_dir / "scripts" / "codex-notify.sh"}"]' in codex_text
+
+
+def test_cmd_setup_apply_replaces_existing_notify_assignment(tmp_path: Path) -> None:
+    plugin_dir = create_plugin_layout(tmp_path)
+    tmux_conf = tmp_path / "tmux.conf"
+    codex_config = tmp_path / "config.toml"
+    codex_config.write_text(
+        "\n".join(
+            [
+                'model = "gpt-5"',
+                'notify = ["bash", "/tmp/old-notify.sh"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert commands.cmd_setup(True, str(plugin_dir), str(tmux_conf), str(codex_config)) == 0
+
+    codex_text = codex_config.read_text(encoding="utf-8")
+    assert 'notify = ["bash", "/tmp/old-notify.sh"]' not in codex_text
+    assert f'notify = ["bash", "{plugin_dir / "scripts" / "codex-notify.sh"}"]' in codex_text
+    assert commands.CODEX_SETUP_START not in codex_text
+
+
+def test_cmd_setup_dry_run_does_not_write_files(tmp_path: Path, capsys) -> None:
+    plugin_dir = create_plugin_layout(tmp_path)
+    tmux_conf = tmp_path / "tmux.conf"
+    codex_config = tmp_path / "config.toml"
+
+    assert commands.cmd_setup(False, str(plugin_dir), str(tmux_conf), str(codex_config)) == 0
+    output = capsys.readouterr().out
+    assert "Dry-run only" in output
+    assert not tmux_conf.exists()
+    assert not codex_config.exists()

@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from .commands import (
+    cmd_doctor,
     cmd_extract_event,
     cmd_map_event,
     cmd_normalize_state,
@@ -15,6 +16,7 @@ from .commands import (
     cmd_state_rank,
     cmd_window_badge,
 )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tmux-codex-status")
@@ -42,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("refresh-pane-badges")
     sub.add_parser("pane-menu")
     sub.add_parser("state-gc")
+    sub.add_parser("doctor")
 
     select_parser = sub.add_parser("select-pane")
     select_parser.add_argument("session_name", nargs="?")
@@ -68,6 +71,8 @@ def dispatch(args: argparse.Namespace) -> int:
         return cmd_pane_menu()
     if args.command == "state-gc":
         return cmd_state_gc()
+    if args.command == "doctor":
+        return cmd_doctor()
     if args.command == "select-pane":
         return cmd_select_pane(args.session_name, args.window_index, args.pane_index)
     return 1
